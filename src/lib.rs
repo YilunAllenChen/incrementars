@@ -135,9 +135,9 @@ where
     }
 
     pub fn stablize(&mut self) {
-        for node in &self.nodes {
-            node.borrow_mut().stablize();
-        }
+        self.nodes
+            .iter_mut()
+            .for_each(|n| n.borrow_mut().stablize());
     }
 }
 
