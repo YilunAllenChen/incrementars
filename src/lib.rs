@@ -1,27 +1,48 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 pub type NodeId = usize;
 
 pub trait Node<T> {
     fn value(&self) -> T;
     fn stablize(&mut self);
+    fn children(&self) -> Vec<Rc<RefCell<dyn Node<T>>>>;
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Var<T>
 where
-    T: Copy + Clone,
+    T: Clone,
 {
-    pub value: T,
+    pub value: RefCell<T>,
+    children: Vec<Rc<RefCell<dyn Node<T>>>>,
+}
+
+impl<T> Var<T>
+where
+    T: Clone,
+{
+    pub fn set(&self, value: T) {
+        *self.value.borrow_mut() = value;
+    }
+
+    pub fn make(value: T) -> Rc<RefCell<Var<T>>> {
+        Rc::new(RefCell::new(Var {
+            value: RefCell::new(value),
+            children: vec![],
+        }))
+    }
 }
 
 impl<T> Node<T> for Var<T>
 where
-    T: Copy,
+    T: Clone,
 {
     fn stablize(&mut self) {}
     fn value(&self) -> T {
-        self.value
+        self.value.borrow().clone()
+    }
+    fn children(&self) -> Vec<Rc<RefCell<dyn Node<T>>>> {
+        self.children.clone()
     }
 }
 
@@ -32,7 +53,8 @@ where
     V: Clone,
 {
     pub value: T,
-    pub parents: (Rc<dyn Node<U>>, Rc<dyn Node<V>>),
+    pub parents: (Rc<RefCell<dyn Node<U>>>, Rc<RefCell<dyn Node<V>>>),
+    pub children: Vec<Rc<RefCell<dyn Node<T>>>>,
     pub func: fn(U, V) -> T,
 }
 
@@ -43,10 +65,16 @@ where
     V: Clone,
 {
     fn stablize(&mut self) {
-        self.value = (self.func)(self.parents.0.value(), self.parents.1.value());
+        self.value = (self.func)(
+            self.parents.0.borrow().value(),
+            self.parents.1.borrow().value(),
+        );
     }
     fn value(&self) -> T {
         self.value.clone()
+    }
+    fn children(&self) -> Vec<Rc<RefCell<dyn Node<T>>>> {
+        self.children.clone()
     }
 }
 
@@ -56,67 +84,59 @@ where
     U: Clone,
     V: Clone,
 {
-    pub fn from(
-        n1: Rc<impl Node<U> + 'static>,
-        n2: Rc<impl Node<V> + 'static>,
+    pub fn make(
+        n1: &Rc<RefCell<impl Node<U> + 'static>>,
+        n2: &Rc<RefCell<impl Node<V> + 'static>>,
         func: fn(U, V) -> T,
-    ) -> Self {
-        Map2 {
-            value: (func)(n1.value(), n2.value()),
-            parents: (n1, n2),
+    ) -> Rc<RefCell<Map2<T, U, V>>> {
+        Rc::new(RefCell::new(Map2 {
+            value: (func)(n1.borrow().value(), n2.borrow().value()),
+            children: vec![],
+            parents: (n1.clone(), n2.clone()),
             func,
-        }
+        }))
     }
 }
 
-pub struct Map3<T, U, V, W>
+pub struct Graph<T>
 where
     T: Clone,
-    U: Clone,
-    V: Clone,
-    W: Clone,
 {
-    pub value: T,
-    pub parents: (Rc<dyn Node<U>>, Rc<dyn Node<V>>, Rc<dyn Node<W>>),
-    pub func: fn(U, V, W) -> T,
+    pub nodes: Vec<Rc<RefCell<dyn Node<T>>>>,
 }
 
-impl<T, U, V, W> Node<T> for Map3<T, U, V, W>
+impl<T> Graph<T>
 where
-    T: Clone,
-    U: Clone,
-    V: Clone,
-    W: Clone,
+    T: Clone + 'static,
 {
-    fn stablize(&mut self) {
-        self.value = (self.func)(
-            self.parents.0.value(),
-            self.parents.1.value(),
-            self.parents.2.value(),
-        );
+    pub fn new() -> Self {
+        Graph { nodes: vec![] }
     }
-    fn value(&self) -> T {
-        self.value.clone()
-    }
-}
 
-impl<T, U, V, W> Map3<T, U, V, W>
-where
-    T: Clone,
-    U: Clone,
-    V: Clone,
-    W: Clone,
-{
-    pub fn from(
-        n1: Rc<impl Node<U> + 'static>,
-        n2: Rc<impl Node<V> + 'static>,
-        n3: Rc<impl Node<W> + 'static>,
-        func: fn(U, V, W) -> T,
-    ) -> Self {
-        Map3 {
-            value: (func)(n1.value(), n2.value(), n3.value()),
-            parents: (n1, n2, n3),
-            func,
+    pub fn var(&mut self, value: T) -> Rc<RefCell<Var<T>>> {
+        let node = Var::make(value);
+        self.nodes.push(node.clone());
+        node
+    }
+
+    pub fn map2<U, V>(
+        &mut self,
+        n1: &Rc<RefCell<impl Node<U> + 'static>>,
+        n2: &Rc<RefCell<impl Node<V> + 'static>>,
+        func: fn(U, V) -> T,
+    ) -> Rc<RefCell<Map2<T, U, V>>>
+    where
+        U: Clone + 'static,
+        V: Clone + 'static,
+    {
+        let node = Map2::make(n1, n2, func);
+        self.nodes.push(node.clone());
+        node
+    }
+
+    pub fn stablize(&mut self) {
+        for node in &self.nodes {
+            node.borrow_mut().stablize();
         }
     }
 }
@@ -125,25 +145,34 @@ where
 mod tests {
     use super::*;
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    fn test_stablize() {
+        let v1 = Var::make(2);
+        let v2 = Var::make(3);
+        let m1 = Map2::make(&v1, &v2, |a, b| a + b);
+        let m2 = Map2::make(&v1, &m1, |a, b| a * b);
+        m1.borrow_mut().stablize();
+        m2.borrow_mut().stablize();
+        assert_eq!(m1.borrow().value(), 5);
+        assert_eq!(m2.borrow().value(), 10);
+        v1.borrow_mut().set(4);
+        m1.borrow_mut().stablize();
+        m2.borrow_mut().stablize();
+        assert_eq!(m1.borrow().value(), 7);
+        assert_eq!(m2.borrow().value(), 28);
     }
 
     #[test]
-    fn test_stablize() {
-        let mut v1 = Rc::new(Var { value: 1 });
-        let v2 = Rc::new(Var { value: 5 });
-        let m1 = Rc::new(Map2::from(v1.clone(), v2, |a, b| a * b));
-        let v3 = Rc::new(Var { value: 2 });
-        let v4 = Rc::new(Var { value: 10 });
+    fn test_graph() {
+        let mut g = Graph::new();
+        let v1 = g.var(2);
+        let v2 = g.var(3);
+        let v3 = g.var(5);
+        let m1 = g.map2(&v1, &v2, |a, b| a + b);
+        let m2 = g.map2(&m1, &v3, |a, b| a * b);
+        assert_eq!(m2.borrow().value(), 25);
 
-        let mut map3 = Map3::from(m1, v3, v4, |a, b, c| a + b + c);
-        map3.stablize();
-
-        assert_eq!(map3.value, 17);
-
-        v1.value = 3;
-        map3.stablize();
-        assert_eq!(map3.value, 27);
+        v1.borrow_mut().set(4);
+        g.stablize();
+        assert_eq!(m2.borrow().value(), 35);
     }
 }
