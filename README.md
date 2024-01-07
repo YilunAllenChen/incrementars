@@ -1,4 +1,5 @@
 # incrementars
+
 ![incrementars](https://github.com/YilunAllenChen/incrementars/assets/32376517/3151ae7f-b7c4-436f-a0f5-5595af5bfafb)
 
 very experimental incremental-computing framework.
@@ -11,10 +12,10 @@ This little project is heavily inspired by Jane Street's [Incremental Computing 
 
 - Well first of all it's done in Rust 🦀 instead of OCaml 🐫.
 - Only some of the core features are implemented.
-    - Var
-    - Map
-    - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
-    - Bind2 (allows you to add dynamism to graphs).
+  - Var
+  - Map
+  - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
+  - Bind2 (allows you to add dynamism to graphs).
 - Unlike `Incremental` which is fully baked and battle-tested, `Incrementars` is highly experimental, with little to no optimizations applied (yet).
 - I think once I get to it, we can actually harness multithreading to speed things up, unlike OCaml where we're locked on one thread at a time.
 
@@ -42,6 +43,7 @@ The computation is modeled with an Directed Acyclic Graph (DAG), where a node ca
 Once a node changes, all nodes that depend on it (and their children, and their children's children, ... until we get to the end of it) are recomputed.
 
 Think this pseudocode:
+
 ```rust
 fn on_change(changed_node) {
     let queue = [changed_node];
@@ -66,10 +68,10 @@ And then we define two computation nodes:
 - m2 = m1 \* v3. This one is slightly more interesting. It takes in one `Variable` node, and one `Map` node.
 - m3 = (m1 + m2) -> to_string. This one is even more interesting. It takes two nodes, and transforms the node into **another type**!
 
-You see that at first, m3 has a value of ( (1 + 1) * 2 + (1 + 1) ).to_string(), which is "6".
+You see that at first, m3 has a value of ( (1 + 1) \* 2 + (1 + 1) ).to_string(), which is "6".
 
 However, as we change v1, and then call `stablize` (which is just a fancy name of `fire away!`),
-the value of m2 changes to ( (5 + 1) * 2 + (5 + 1) ).to_string(), which is "18". 
+the value of m2 changes to ( (5 + 1) \* 2 + (5 + 1) ).to_string(), which is "18".
 
 ```rust
 use incrementars::Graph;
@@ -100,6 +102,8 @@ fn main() {
 }
 ```
 
+You can find more examples [HERE](./src/examples.rs)
+
 ## OK, but why?
 
 You might be asking yourself, how is this useful? Can I just do something like this? Isn't this simpler?
@@ -116,7 +120,7 @@ the whole graph every time something changes, because you don't model the topolo
 to guarantee correctness, you have no choice but to redo the whole thing every time.
 
 Whereas in an incremental computing system, the dependency graphs are explicitly modelled, and hence it's safe to refire
-only a subset of the system. This not only makes it faster, saves resources, but also makes your system more modular, and hence 
+only a subset of the system. This not only makes it faster, saves resources, but also makes your system more modular, and hence
 easier to reason about.
 
 For example, think about the case when only v3 changed. In the simple model, you have to recompute everything. Whereas

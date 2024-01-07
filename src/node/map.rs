@@ -14,7 +14,7 @@ where
 {
     pub id: NodeId,
     value: SelfT,
-    parent: NodeInputHandle<In>,
+    upstream: NodeInputHandle<In>,
     func: fn(In) -> SelfT,
 }
 
@@ -27,7 +27,7 @@ where
         self.id
     }
     fn stablize(&mut self) {
-        self.value = (self.func)(self.parent.borrow().value());
+        self.value = (self.func)(self.upstream.borrow().value());
     }
     fn dirty(&self) -> bool {
         // HACK: this is managed by the graph.
@@ -61,7 +61,7 @@ where
         Map {
             id,
             value: (func)(n1.borrow().value()),
-            parent: n1.clone(),
+            upstream: n1.clone(),
             func,
         }
     }

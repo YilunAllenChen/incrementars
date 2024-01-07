@@ -15,7 +15,7 @@ where
     pub id: NodeId,
     bound: NodeInputHandle<SelfT>,
     captured_inputs: (NodeInputHandle<SelfT>, NodeInputHandle<SelfT>),
-    parent: NodeInputHandle<In>,
+    upstream: NodeInputHandle<In>,
     func: fn(In, (NodeInputHandle<SelfT>, NodeInputHandle<SelfT>)) -> NodeInputHandle<SelfT>,
 }
 
@@ -28,7 +28,7 @@ where
         self.id
     }
     fn stablize(&mut self) {
-        self.bound = (self.func)(self.parent.borrow().value(), self.captured_inputs.clone());
+        self.bound = (self.func)(self.upstream.borrow().value(), self.captured_inputs.clone());
     }
     fn dirty(&self) -> bool {
         // HACK: this is managed by the graph.
@@ -67,7 +67,7 @@ where
         Bind2 {
             id,
             bound: (func)(n1.borrow().value(), captured_inputs.clone()),
-            parent: n1.clone(),
+            upstream: n1.clone(),
             func,
             captured_inputs,
         }

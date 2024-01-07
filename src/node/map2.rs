@@ -15,7 +15,7 @@ where
 {
     pub id: NodeId,
     pub value: SelfT,
-    pub parents: (NodeInputHandle<In1>, NodeInputHandle<In2>),
+    pub upstreams: (NodeInputHandle<In1>, NodeInputHandle<In2>),
     pub func: fn(In1, In2) -> SelfT,
 }
 
@@ -30,8 +30,8 @@ where
     }
     fn stablize(&mut self) {
         self.value = (self.func)(
-            self.parents.0.borrow().value(),
-            self.parents.1.borrow().value(),
+            self.upstreams.0.borrow().value(),
+            self.upstreams.1.borrow().value(),
         );
     }
     fn dirty(&self) -> bool {
@@ -74,7 +74,7 @@ where
         Map2 {
             id,
             value: (func)(n1.borrow().value(), n2.borrow().value()),
-            parents: (n1.clone(), n2.clone()),
+            upstreams: (n1.clone(), n2.clone()),
             func,
         }
     }
