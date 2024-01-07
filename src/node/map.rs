@@ -2,6 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{NodeBehavior, NodeId, NodeInput, NodeValue};
 
+use super::traits::NodeInputHandle;
+
 pub type MapHandle<SelfT, In> = Rc<RefCell<Map<SelfT, In>>>;
 
 #[derive(Clone)]
@@ -12,7 +14,7 @@ where
 {
     pub id: NodeId,
     value: SelfT,
-    parent: Rc<RefCell<dyn NodeInput<In>>>,
+    parent: NodeInputHandle<In>,
     func: fn(In) -> SelfT,
 }
 
@@ -55,11 +57,7 @@ where
     SelfT: Clone,
     In: Clone,
 {
-    pub fn make(
-        id: NodeId,
-        n1: &Rc<RefCell<dyn NodeInput<In>>>,
-        func: fn(In) -> SelfT,
-    ) -> Map<SelfT, In> {
+    pub fn make(id: NodeId, n1: &NodeInputHandle<In>, func: fn(In) -> SelfT) -> Map<SelfT, In> {
         Map {
             id,
             value: (func)(n1.borrow().value()),

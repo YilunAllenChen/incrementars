@@ -2,6 +2,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{NodeBehavior, NodeId, NodeInput, NodeValue};
 
+use super::traits::NodeInputHandle;
+
 pub type Map2Handle<SelfT, In1, In2> = Rc<RefCell<Map2<SelfT, In1, In2>>>;
 
 #[derive(Clone)]
@@ -13,10 +15,7 @@ where
 {
     pub id: NodeId,
     pub value: SelfT,
-    pub parents: (
-        Rc<RefCell<dyn NodeInput<In1>>>,
-        Rc<RefCell<dyn NodeInput<In2>>>,
-    ),
+    pub parents: (NodeInputHandle<In1>, NodeInputHandle<In2>),
     pub func: fn(In1, In2) -> SelfT,
 }
 
@@ -68,8 +67,8 @@ where
 {
     pub fn make(
         id: NodeId,
-        n1: &Rc<RefCell<dyn NodeInput<In1>>>,
-        n2: &Rc<RefCell<dyn NodeInput<In2>>>,
+        n1: &NodeInputHandle<In1>,
+        n2: &NodeInputHandle<In2>,
         func: fn(In1, In2) -> SelfT,
     ) -> Map2<SelfT, In1, In2> {
         Map2 {
