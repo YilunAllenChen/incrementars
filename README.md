@@ -10,8 +10,12 @@ This little project is heavily inspired by Jane Street's [Incremental Computing 
 ### What's different (and going to be different)?
 
 - Well first of all it's done in Rust 🦀 instead of OCaml 🐫.
+- Only some of the core features are implemented.
+    - Var
+    - Map
+    - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
+    - Bind2 (allows you to add dynamism to graphs).
 - Unlike `Incremental` which is fully baked and battle-tested, `Incrementars` is highly experimental, with little to no optimizations applied (yet).
-- Missing some of the key powerful features like `bind` (which allows you to create dynamic DAG's - super cool!)
 - I think once I get to it, we can actually harness multithreading to speed things up, unlike OCaml where we're locked on one thread at a time.
 
 ### What's similar?
@@ -38,7 +42,7 @@ The computation is modeled with an Directed Acyclic Graph (DAG), where a node ca
 Once a node changes, all nodes that depend on it (and their children, and their children's children, ... until we get to the end of it) are recomputed.
 
 Think this pseudocode:
-```
+```rust
 fn on_change(changed_node) {
     let queue = [changed_node];
     while queue.not_empty() {
