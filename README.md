@@ -1,4 +1,5 @@
 # incrementars
+![incrementars](https://github.com/YilunAllenChen/incrementars/assets/32376517/3151ae7f-b7c4-436f-a0f5-5595af5bfafb)
 
 very experimental incremental-computing framework.
 
@@ -39,11 +40,12 @@ Once a node changes, all nodes that depend on it (and their children, and their 
 Think this pseudocode:
 ```
 fn on_change(changed_node) {
-    queue = [changed_node]
-    while queue.not_empty():
-        node = queue.pop()
-        node.recompute()
-        queue.extend(node.children)
+    let queue = [changed_node];
+    while queue.not_empty() {
+        let node = queue.pop();
+        node.recompute();
+        queue.extend(node.children);
+    }
 }
 ```
 
@@ -58,11 +60,12 @@ And then we define two computation nodes:
 
 - m1 = v1 + v2. It takes in two `Variable` nodes.
 - m2 = m1 \* v3. This one is slightly more interesting. It takes in one `Variable` node, and one `Map` node.
+- m3 = (m1 + m2) -> to_string. This one is even more interesting. It takes two nodes, and transforms the node into **another type**!
 
-You see that at first m2 has a value of (2 + 3) \* 5 = 25.
+You see that at first, m3 has a value of ( (1 + 1) * 2 + (1 + 1) ).to_string(), which is "6".
 
 However, as we change v1, and then call `stablize` (which is just a fancy name of `fire away!`),
-the value of m2 changes to (4 + 3) \* 5 = 35.
+the value of m2 changes to ( (5 + 1) * 2 + (5 + 1) ).to_string(), which is "18". 
 
 ```rust
 use incrementars::Graph;
@@ -100,7 +103,7 @@ You might be asking yourself, how is this useful? Can I just do something like t
 ```rust
 let m1 = v1 + v2;
 let m2 = m1 * v3;
-let m3 = m1 + m2;
+let m3 = (m1 + m2).to_string();
 ```
 
 And you'd be right. For simple computations like this, you don't need `Incrementars`.
