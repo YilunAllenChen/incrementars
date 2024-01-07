@@ -10,7 +10,8 @@ where
     T: Clone,
 {
     pub id: NodeId,
-    pub value: RefCell<T>,
+    value: RefCell<T>,
+    dirty: bool,
 }
 
 impl<T> Var<T>
@@ -19,12 +20,14 @@ where
 {
     pub fn set(&mut self, value: T) {
         *self.value.borrow_mut() = value;
+        self.dirty = true;
     }
 
     pub fn make(id: NodeId, value: T) -> Var<T> {
         Var {
             id,
             value: RefCell::new(value),
+            dirty: false,
         }
     }
 }
@@ -33,7 +36,12 @@ impl<SelfT: Clone> NodeBehavior for Var<SelfT> {
     fn id(&self) -> NodeId {
         self.id
     }
-    fn stablize(&mut self) {}
+    fn dirty(&self) -> bool {
+        self.dirty
+    }
+    fn stablize(&mut self) {
+        self.dirty = false;
+    }
 }
 
 impl<SelfT: Clone> NodeValue<SelfT> for Var<SelfT> {

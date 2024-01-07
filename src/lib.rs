@@ -1,15 +1,19 @@
 use std::{cell::RefCell, rc::Rc};
 mod node;
 
+use node::map::{Map, MapHandle};
 use node::map2::{Map2, Map2Handle};
-use node::var::{Var, VarHandle};
-use node::traits::NodeInputHandle;
 pub use node::traits::{handles, NodeBehavior, NodeId, NodeInput, NodeValue};
+use node::traits::{NodeBehaviorHandle, NodeInputHandle};
+use node::var::{Var, VarHandle};
 
+/**
+High level construct to manage nodes and their dependency relationships
+*/
 pub struct Graph {
     nodes: Vec<Rc<RefCell<dyn NodeBehavior>>>,
     pub id_counter: u64,
-    node_to_children: Vec<Vec<NodeId>>,
+    node_to_children_id: Vec<Vec<NodeId>>,
 }
 
 impl Graph {
@@ -17,12 +21,12 @@ impl Graph {
         Graph {
             nodes: vec![],
             id_counter: 0,
-            node_to_children: vec![],
+            node_to_children_id: vec![],
         }
     }
 
-    fn get_children(&self, id: NodeId) -> Vec<Rc<RefCell<dyn NodeBehavior>>> {
-        match self.node_to_children.get(id as usize) {
+    fn get_children(&self, id: NodeId) -> Vec<NodeBehaviorHandle> {
+        match self.node_to_children_id.get(id as usize) {
             Some(children) => children
                 .iter()
                 .map(|i| self.nodes[*i as usize].clone())
@@ -42,7 +46,28 @@ impl Graph {
         let node = Var::make(node_id, value);
         let (ident, input, behavior) = handles(node.clone());
         self.nodes.push(behavior);
-        self.node_to_children.push(vec![]);
+        self.node_to_children_id.push(vec![]);
+        (ident, input)
+    }
+
+    pub fn map<In, SelfT>(
+        &mut self,
+        n: &Rc<RefCell<dyn NodeInput<In>>>,
+        func: fn(In) -> SelfT,
+    ) -> (MapHandle<SelfT, In>, NodeInputHandle<SelfT>)
+    where
+        In: Clone + 'static,
+        SelfT: Clone + 'static,
+    {
+        let node_id = self.gen_id();
+        let node = Map::make(node_id, n, func);
+        let (ident, input, behavior) = handles(node);
+        self.nodes.push(behavior);
+        self.node_to_children_id.push(vec![]);
+        self.node_to_children_id
+            .get_mut(n.borrow().id() as usize)
+            .unwrap()
+            .push(node_id);
         (ident, input)
     }
 
@@ -61,12 +86,12 @@ impl Graph {
         let node = Map2::make(node_id, n1, n2, func);
         let (ident, input, behavior) = handles(node);
         self.nodes.push(behavior);
-        self.node_to_children.push(vec![]);
-        self.node_to_children
+        self.node_to_children_id.push(vec![]);
+        self.node_to_children_id
             .get_mut(n1.borrow().id() as usize)
             .unwrap()
             .push(node_id);
-        self.node_to_children
+        self.node_to_children_id
             .get_mut(n2.borrow().id() as usize)
             .unwrap()
             .push(node_id);
@@ -75,13 +100,21 @@ impl Graph {
 
     pub fn stablize(&mut self) {
         let mut queue = std::collections::VecDeque::new();
-        queue.push_back(self.nodes[0].clone());
-        println!("self nodes to children {:?}", self.node_to_children);
+        self.nodes
+            .iter()
+            .filter_map(|node| {
+                if node.borrow().dirty() {
+                    Some(node.clone())
+                } else {
+                    None
+                }
+            })
+            .for_each(|node| {
+                queue.push_back(node);
+            });
         while let Some(node) = queue.pop_front() {
             node.borrow_mut().stablize();
-            println!("Stablizing node {}", node.borrow().id());
             for child in self.get_children(node.borrow().id()) {
-                println!("should stablize node {}", child.borrow().id());
                 queue.push_back(child);
             }
         }
@@ -141,5 +174,45 @@ mod tests {
         v1w.borrow_mut().set(5);
         g.stablize();
         assert_eq!(m3r.borrow().value(), 8);
+    }
+
+    #[test]
+    fn test_pipeline() {
+        // v1       v2
+        //  |        |
+        // m11      m21
+        //  |        |
+        // m12  v3  m22
+        //  |  /  \  |
+        // m13      m23
+        //  |        |
+        // o1       o2
+
+        let incr = |x| x + 1;
+        let mut g = Graph::new();
+
+        let (_, v1r) = g.var(1);
+        let (v2w, v2r) = g.var(2);
+        let (_, v3r) = g.var(10);
+
+        let (_, m11r) = g.map(&v1r, incr);
+        let (_, m12r) = g.map(&m11r, incr);
+        let (_, m13r) = g.map2(&m12r, &v3r, |a, b| a + b);
+        let (_, o1) = g.map(&m13r, |a| a.to_string());
+
+        let (_, m21r) = g.map(&v2r, incr);
+        let (_, m22r) = g.map(&m21r, incr);
+        let (_, m23r) = g.map2(&m22r, &v3r, |a, b| a + b);
+        let (_, o2) = g.map(&m23r, |a| a.to_string());
+
+        g.stablize();
+        assert_eq!(o1.borrow().value(), "13".to_string());
+        assert_eq!(o2.borrow().value(), "14".to_string());
+
+        v2w.borrow_mut().set(5);
+        assert_eq!(o1.borrow().value(), "13".to_string());
+        g.stablize();
+        assert_eq!(o1.borrow().value(), "13".to_string());
+        assert_eq!(o2.borrow().value(), "17".to_string());
     }
 }

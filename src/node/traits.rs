@@ -7,6 +7,7 @@ Trait defines the behaviors of a node.
 pub trait NodeBehavior {
     fn id(&self) -> NodeId;
     fn stablize(&mut self);
+    fn dirty(&self) -> bool;
 }
 
 pub type NodeIdentityHandle<T> = Rc<RefCell<T>>;

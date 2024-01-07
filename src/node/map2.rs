@@ -35,6 +35,10 @@ where
             self.parents.1.borrow().value(),
         );
     }
+    fn dirty(&self) -> bool {
+        // HACK: this is managed by the graph.
+        false
+    }
 }
 
 impl<SelfT, In1, In2> NodeValue<SelfT> for Map2<SelfT, In1, In2>
