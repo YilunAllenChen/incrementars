@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::{cell::RefCell, rc::Rc};
 mod node;
 
@@ -52,7 +53,7 @@ impl Graph {
 
     pub fn map<In, SelfT>(
         &mut self,
-        n: &Rc<RefCell<dyn NodeInput<In>>>,
+        n: &NodeInputHandle<In>,
         func: fn(In) -> SelfT,
     ) -> (MapHandle<SelfT, In>, NodeInputHandle<SelfT>)
     where
@@ -73,8 +74,8 @@ impl Graph {
 
     pub fn map2<In1, In2, SelfT>(
         &mut self,
-        n1: &Rc<RefCell<dyn NodeInput<In1>>>,
-        n2: &Rc<RefCell<dyn NodeInput<In2>>>,
+        n1: &NodeInputHandle<In1>,
+        n2: &NodeInputHandle<In2>,
         func: fn(In1, In2) -> SelfT,
     ) -> (Map2Handle<SelfT, In1, In2>, NodeInputHandle<SelfT>)
     where
@@ -99,7 +100,7 @@ impl Graph {
     }
 
     pub fn stablize(&mut self) {
-        let mut queue = std::collections::VecDeque::new();
+        let mut queue = VecDeque::new();
         self.nodes
             .iter()
             .filter_map(|node| {
