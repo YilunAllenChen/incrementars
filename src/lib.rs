@@ -1,169 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
+mod node;
 
-pub type NodeId = u64;
-
-pub trait NodeBehavior {
-    fn id(&self) -> NodeId;
-    fn stablize(&mut self);
-}
-
-pub trait NodeValue<T> {
-    fn value(&self) -> T;
-}
-
-pub trait NodeInput<In>: NodeBehavior + NodeValue<In> {}
-
-pub trait NodeShare<In> {
-    fn as_input(self) -> Rc<RefCell<dyn NodeInput<In>>>;
-}
-
-#[derive(Clone)]
-pub struct Var<T>
-where
-    T: Clone,
-{
-    pub id: NodeId,
-    pub value: RefCell<T>,
-}
-
-impl<T> Var<T>
-where
-    T: Clone,
-{
-    pub fn set(&mut self, value: T) {
-        *self.value.borrow_mut() = value;
-    }
-
-    pub fn make(id: NodeId, value: T) -> Var<T> {
-        Var {
-            id,
-            value: RefCell::new(value),
-        }
-    }
-}
-
-fn as_behavior(value: impl NodeBehavior + 'static) -> Rc<RefCell<dyn NodeBehavior>> {
-    Rc::new(RefCell::new(value))
-}
-
-pub fn handles<T, U>(
-    value: T,
-) -> (
-    Rc<RefCell<T>>,
-    Rc<RefCell<dyn NodeInput<U>>>,
-    Rc<RefCell<dyn NodeBehavior>>,
-)
-where
-    T: NodeInput<U> + 'static,
-{
-    let rc = Rc::new(RefCell::new(value));
-    (rc.clone(), rc.clone(), rc)
-}
-
-impl<SelfT: Clone> NodeBehavior for Var<SelfT> {
-    fn id(&self) -> NodeId {
-        self.id
-    }
-    fn stablize(&mut self) {}
-}
-
-impl<SelfT: Clone> NodeValue<SelfT> for Var<SelfT> {
-    fn value(&self) -> SelfT {
-        self.value.borrow().clone()
-    }
-}
-
-impl<SelfT: Clone> NodeInput<SelfT> for Var<SelfT> {}
-
-impl<SelfT: Clone + 'static> NodeShare<SelfT> for Var<SelfT> {
-    fn as_input(self) -> Rc<RefCell<dyn NodeInput<SelfT>>> {
-        Rc::new(RefCell::new(self)) as Rc<RefCell<dyn NodeInput<SelfT>>>
-    }
-}
-
-#[derive(Clone)]
-pub struct Map2<SelfT, In1, In2>
-where
-    SelfT: Clone,
-    In1: Clone,
-    In2: Clone,
-{
-    pub id: NodeId,
-    pub value: SelfT,
-    pub parents: (
-        Rc<RefCell<dyn NodeInput<In1>>>,
-        Rc<RefCell<dyn NodeInput<In2>>>,
-    ),
-    pub func: fn(In1, In2) -> SelfT,
-}
-
-impl<SelfT, In1, In2> NodeBehavior for Map2<SelfT, In1, In2>
-where
-    SelfT: Clone,
-    In1: Clone,
-    In2: Clone,
-{
-    fn id(&self) -> NodeId {
-        self.id
-    }
-    fn stablize(&mut self) {
-        self.value = (self.func)(
-            self.parents.0.borrow().value(),
-            self.parents.1.borrow().value(),
-        );
-    }
-}
-
-impl<SelfT, In1, In2> NodeValue<SelfT> for Map2<SelfT, In1, In2>
-where
-    SelfT: Clone,
-    In1: Clone,
-    In2: Clone,
-{
-    fn value(&self) -> SelfT {
-        self.value.clone()
-    }
-}
-
-impl<SelfT, In1, In2> NodeInput<SelfT> for Map2<SelfT, In1, In2>
-where
-    SelfT: Clone,
-    In1: Clone,
-    In2: Clone,
-{
-}
-
-impl<SelfT, In1, In2> Map2<SelfT, In1, In2>
-where
-    SelfT: Clone,
-    In1: Clone,
-    In2: Clone,
-{
-    pub fn make(
-        id: NodeId,
-        n1: &Rc<RefCell<dyn NodeInput<In1>>>,
-        n2: &Rc<RefCell<dyn NodeInput<In2>>>,
-        func: fn(In1, In2) -> SelfT,
-    ) -> Map2<SelfT, In1, In2> {
-        Map2 {
-            id,
-            value: (func)(n1.borrow().value(), n2.borrow().value()),
-            parents: (n1.clone(), n2.clone()),
-            func,
-        }
-    }
-}
-
-impl<SelfT, In1, In2> NodeShare<SelfT> for Map2<SelfT, In1, In2>
-where
-    SelfT: Clone + 'static,
-    In1: Clone + 'static,
-    In2: Clone + 'static,
-{
-    fn as_input(self) -> Rc<RefCell<dyn NodeInput<SelfT>>> {
-        Rc::new(RefCell::new(self)) as Rc<RefCell<dyn NodeInput<SelfT>>>
-    }
-}
+use node::map2::{Map2, Map2Handle};
+use node::var::{Var, VarHandle};
+use node::traits::NodeInputHandle;
+pub use node::traits::{handles, NodeBehavior, NodeId, NodeInput, NodeValue};
 
 pub struct Graph {
     nodes: Vec<Rc<RefCell<dyn NodeBehavior>>>,
@@ -196,10 +37,7 @@ impl Graph {
         num
     }
 
-    pub fn var<T: Clone + 'static>(
-        &mut self,
-        value: T,
-    ) -> (Rc<RefCell<Var<T>>>, Rc<RefCell<dyn NodeInput<T>>>) {
+    pub fn var<T: Clone + 'static>(&mut self, value: T) -> (VarHandle<T>, NodeInputHandle<T>) {
         let node_id = self.gen_id();
         let node = Var::make(node_id, value);
         let (ident, input, behavior) = handles(node.clone());
@@ -213,7 +51,7 @@ impl Graph {
         n1: &Rc<RefCell<dyn NodeInput<In1>>>,
         n2: &Rc<RefCell<dyn NodeInput<In2>>>,
         func: fn(In1, In2) -> SelfT,
-    ) -> (Rc<RefCell<Map2<SelfT, In1, In2>>>, Rc<RefCell<dyn NodeInput<SelfT>>>)
+    ) -> (Map2Handle<SelfT, In1, In2>, NodeInputHandle<SelfT>)
     where
         In1: Clone + 'static,
         In2: Clone + 'static,
