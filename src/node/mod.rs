@@ -1,93 +1,23 @@
+use std::cmp::max;
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
-pub trait Node {
-    fn id(&self) -> usize;
-    fn height(&self) -> usize;
-    fn stablize(&mut self);
-}
+pub use self::{
+    map::{Map1, _Map1},
+    map2::{Map2, _Map2},
+    traits::{Node, Observable},
+    var::{Var, _Var},
+};
+mod map;
+mod map2;
+mod traits;
+mod var;
 
-pub trait Upstream<T> {
-    fn observe(&self) -> T;
-}
-
-/// Internal representation of a Var node.
-pub struct _Var<T> {
-    id: usize,
-    height: usize,
-    value: T,
-}
-
-impl<T> Node for _Var<T> {
-    fn id(&self) -> usize {
-        self.id
-    }
-    fn height(&self) -> usize {
-        self.height
-    }
-    fn stablize(&mut self) {}
-}
-
-impl<T> _Var<T> {
-    pub fn new(id: usize, height: usize, value: T) -> Self {
-        Self { id, height, value }
-    }
-}
-/// A variable node.
-pub struct Var<T> {
-    node: Rc<RefCell<_Var<T>>>,
-}
-
-impl<T> Clone for Var<T> {
-    fn clone(&self) -> Self {
-        Self {
-            node: self.node.clone(),
-        }
-    }
-}
-
-impl<T> Var<T> {
-    pub fn set(&self, value: T) {
-        let mut borrowed = self.node.deref().borrow_mut();
-        borrowed.value = value;
-    }
-}
-
-impl<T: Copy> Upstream<T> for Var<T> {
-    fn observe(&self) -> T {
-        let borrowed = self.node.deref().borrow();
-        borrowed.value
-    }
-}
-
-struct _Map<I, O> {
-    id: usize,
-    height: usize,
-    value: O,
-    input: Box<dyn Upstream<I>>,
-    f: fn(I) -> O,
-}
-
-impl<I, O> Node for _Map<I, O> {
-    fn id(&self) -> usize {
-        self.id
-    }
-    fn height(&self) -> usize {
-        self.height
-    }
-    fn stablize(&mut self) {
-        self.value = (self.f)(self.input.observe());
-    }
-}
-
-pub struct Map<I, O> {
-    node: Rc<RefCell<_Map<I, O>>>,
-}
-
-impl<I, O: Copy> Upstream<O> for Map<I, O> {
-    fn observe(&self) -> O {
-        let borrowed = self.node.deref().borrow();
-        borrowed.value
-    }
+/// Actualy just creating a Box from a clone. Equivalent to `Box::new($e.clone())`
+#[macro_export]
+macro_rules! as_input {
+    ($e:expr) => {
+        Box::new($e.clone())
+    };
 }
 
 pub struct Incrementars<'a> {
@@ -111,21 +41,50 @@ impl<'a> Incrementars<'a> {
         Var { node }
     }
 
-    pub fn map<I: 'a, O: 'a>(&mut self, input: Box<dyn Upstream<I>>, f: fn(I) -> O) -> Map<I, O> {
+    pub fn map<I: 'a, O: 'a>(
+        &mut self,
+        input: Box<dyn Observable<I>>,
+        f: fn(I) -> O,
+    ) -> Map1<I, O> {
         let id = self.id_counter;
         self.id_counter += 1;
-        let node = Rc::new(RefCell::new(_Map {
+        let node = Rc::new(RefCell::new(_Map1 {
             id,
-            height: 0,
+            height: input.height() + 1,
             value: (f)(input.observe()),
             input,
             f,
         }));
         self.nodes.push(node.clone());
-        Map { node }
+        Map1 { node }
     }
 
-    pub fn _stablize(&mut self) {}
+    pub fn map2<I1: 'a, I2: 'a, O: 'a>(
+        &mut self,
+        input1: Box<dyn Observable<I1>>,
+        input2: Box<dyn Observable<I2>>,
+        f: fn(I1, I2) -> O,
+    ) -> Map2<I1, I2, O> {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        let node = Rc::new(RefCell::new(_Map2 {
+            id,
+            height: max(input1.height(), input2.height()) + 1,
+            value: (f)(input1.observe(), input2.observe()),
+            input1,
+            input2,
+            f,
+        }));
+        self.nodes.push(node.clone());
+        Map2 { node }
+    }
+
+    pub fn stablize(&mut self) {
+        self.nodes.sort_by_key(|x| x.deref().borrow().height());
+        self.nodes
+            .iter()
+            .for_each(|x| x.deref().borrow_mut().stablize());
+    }
 }
 
 #[cfg(test)]
@@ -151,9 +110,24 @@ mod tests {
     fn bifurcate() {
         let mut compute = Incrementars::new();
         let var = compute.var(0);
-        let map = compute.map(Box::new(var.clone()), |x| x + 1);
-        let map2 = compute.map(Box::new(var), |x| x + 1);
+        let map = compute.map(as_input!(var), |x| x + 1);
+        let map2 = compute.map(as_input!(var), |x| x + 1);
         assert_eq!(map.observe(), 1);
         assert_eq!(map2.observe(), 1);
+
+        var.set(10);
+        assert_eq!(map.observe(), 1);
+        compute.stablize();
+        assert_eq!(map.observe(), 11);
+        assert_eq!(map2.observe(), 11);
+    }
+
+    #[test]
+    fn test_map2() {
+        let mut compute = Incrementars::new();
+        let var1 = compute.var(50);
+        let var2 = compute.var(" dollars");
+        let map2 = compute.map2(as_input!(var1), as_input!(var2), |x, y| x.to_string() + y);
+        assert_eq!(map2.observe(), "50 dollars");
     }
 }
