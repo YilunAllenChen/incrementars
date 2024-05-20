@@ -1,28 +1,34 @@
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{Node, Observable};
+use super::traits::{MaybeDirty, Node, Observable};
 use std::ops::Deref;
 
 /// Internal representation of a Var node.
 pub struct _Var<T> {
     id: usize,
-    height: usize,
+    depth: i32,
     value: T,
+    dirty: bool,
 }
 
 impl<T> Node for _Var<T> {
     fn id(&self) -> usize {
         self.id
     }
-    fn height(&self) -> usize {
-        self.height
+    fn depth(&self) -> i32 {
+        self.depth
     }
     fn stablize(&mut self) {}
 }
 
 impl<T> _Var<T> {
-    pub fn new(id: usize, height: usize, value: T) -> Self {
-        Self { id, height, value }
+    pub fn new(id: usize, depth: i32, value: T) -> Self {
+        Self {
+            id,
+            depth,
+            value,
+            dirty: false,
+        }
     }
 }
 /// A variable node.
@@ -40,17 +46,30 @@ impl<T> Clone for Var<T> {
 
 impl<T> Var<T> {
     pub fn set(&self, value: T) {
-        let mut borrowed = self.node.deref().borrow_mut();
-        borrowed.value = value;
+        let mut internal = self.node.deref().borrow_mut();
+        internal.value = value;
+        internal.dirty = true;
+    }
+}
+
+impl<T> MaybeDirty for Var<T> {
+    fn id(&self) -> usize {
+        self.node.deref().borrow().id
+    }
+    fn is_dirty(&self) -> bool {
+        self.node.deref().borrow().dirty
     }
 }
 
 impl<T: Clone> Observable<T> for Var<T> {
+    fn id(&self) -> usize {
+        self.node.deref().borrow().id
+    }
     fn observe(&self) -> T {
         let borrowed = self.node.deref().borrow();
         borrowed.value.clone()
     }
-    fn height(&self) -> usize {
-        self.node.deref().borrow().height
+    fn depth(&self) -> i32 {
+        self.node.deref().borrow().depth
     }
 }

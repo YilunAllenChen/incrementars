@@ -3,4 +3,5 @@ mod node;
 
 pub mod prelude {
     pub use crate::examples::*;
+    pub use crate::node::*;
 }
