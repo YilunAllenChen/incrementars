@@ -1,6 +1,6 @@
 pub enum StablizationCallback {
     ValueChanged,
-    DependenciesChanged(Vec<usize>),
+    DependenciesUpdated { from: Vec<usize>, to: Vec<usize> },
 }
 
 pub trait Node {
@@ -13,6 +13,12 @@ pub trait Observable<T> {
     fn id(&self) -> usize;
     fn observe(&self) -> T;
     fn depth(&self) -> i32;
+}
+
+impl<T> PartialEq for dyn Observable<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
 }
 
 pub trait MaybeDirty {

@@ -6,16 +6,18 @@ use std::{cell::RefCell, rc::Rc};
 use traits::StablizationCallback;
 
 use self::traits::MaybeDirty;
+mod bind;
+mod map;
+mod map2;
+mod traits;
+mod var;
 pub use self::{
+    bind::{Bind1, _Bind1},
     map::{Map1, _Map1},
     map2::{Map2, _Map2},
     traits::{Node, Observable},
     var::{Var, _Var},
 };
-mod map;
-mod map2;
-mod traits;
-mod var;
 
 /// Actualy just creating a Box from a clone. Equivalent to `Box::new($e.clone())`
 #[macro_export]
@@ -107,6 +109,31 @@ impl<'a> Incrementars<'a> {
         Map2 { node }
     }
 
+    pub fn bind<I: 'a, O: 'a>(
+        &mut self,
+        input: Box<dyn Observable<I>>,
+        f: Box<dyn Fn(I) -> Box<dyn Observable<O>>>,
+    ) -> Bind1<I, O> {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        let input_id = input.id();
+        match self.dependencies.get_mut(&input_id) {
+            Some(input_deps) => input_deps.push(id),
+            None => {
+                self.dependencies.insert(input_id, vec![id]);
+            }
+        }
+        let node = Rc::new(RefCell::new(_Bind1 {
+            id,
+            depth: input.depth() - 1,
+            value: (f)(input.observe()),
+            input,
+            f,
+        }));
+        self.nodes.push(node.clone());
+        Bind1 { node }
+    }
+
     pub fn stablize(&mut self) {
         let dirty_inputs = self.inputs.iter().filter(|x| x.is_dirty());
 
@@ -133,8 +160,23 @@ impl<'a> Incrementars<'a> {
                     }),
                     None => {}
                 },
-                StablizationCallback::DependenciesChanged(_) => {
-                    todo!("not implemented yet.")
+                StablizationCallback::DependenciesUpdated { from, to } => {
+                    from.iter()
+                        .for_each(|id| match self.dependencies.get_mut(id) {
+                            Some(deps) => {
+                                deps.retain(|x| *x != head_id);
+                            }
+                            None => {}
+                        });
+                    to.iter()
+                        .for_each(|id| match self.dependencies.get_mut(id) {
+                            Some(deps) => {
+                                deps.push(head_id);
+                            }
+                            None => {
+                                self.dependencies.insert(*id, vec![head_id]);
+                            }
+                        })
                 }
             })
         }
@@ -200,5 +242,28 @@ mod tests {
         var1.set(10);
         compute.stablize();
         assert_eq!(rejoin.observe(), 24);
+    }
+
+    #[test]
+    fn test_bind() {
+        let mut compute = Incrementars::new();
+        let left = compute.var("Left");
+        let right = compute.var("Right");
+
+        #[derive(Debug, Clone, Copy)]
+        enum Side {
+            Left,
+            Right,
+        }
+
+        let picker = compute.var(Side::Left);
+
+
+        let binder = compute.bind(as_input!(picker), Box::new(|x| {
+            match x {
+                Side::Left => as_input!(left),
+                Side::Right => as_input!(right),
+            }
+        }));
     }
 }
