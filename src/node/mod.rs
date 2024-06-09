@@ -3,6 +3,8 @@ use std::collections::{BinaryHeap, HashMap};
 use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
+use traits::StablizationCallback;
+
 use self::traits::MaybeDirty;
 pub use self::{
     map::{Map1, _Map1},
@@ -122,14 +124,19 @@ impl<'a> Incrementars<'a> {
                 return;
             }
             last_id = head_id;
-            node.deref().borrow_mut().stablize();
-            match self.dependencies.get(&head_id) {
-                Some(dependent_ids) => dependent_ids.iter().for_each(|id| {
-                    let height = self.nodes[*id].deref().borrow().depth();
-                    queue.push((height, *id));
-                }),
-                None => {}
-            }
+            let res = node.deref().borrow_mut().stablize();
+            res.into_iter().for_each(|cb| match cb {
+                StablizationCallback::ValueChanged => match self.dependencies.get(&head_id) {
+                    Some(dependent_ids) => dependent_ids.iter().for_each(|id| {
+                        let height = self.nodes[*id].deref().borrow().depth();
+                        queue.push((height, *id));
+                    }),
+                    None => {}
+                },
+                StablizationCallback::DependenciesChanged(_) => {
+                    todo!("not implemented yet.")
+                }
+            })
         }
     }
 }

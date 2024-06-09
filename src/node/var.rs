@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{MaybeDirty, Node, Observable};
+use super::traits::{MaybeDirty, Node, Observable, StablizationCallback};
 use std::ops::Deref;
 
 /// Internal representation of a Var node.
@@ -18,7 +18,9 @@ impl<T> Node for _Var<T> {
     fn depth(&self) -> i32 {
         self.depth
     }
-    fn stablize(&mut self) {}
+    fn stablize(&mut self) -> Vec<StablizationCallback> {
+        vec![StablizationCallback::ValueChanged]
+    }
 }
 
 impl<T> _Var<T> {

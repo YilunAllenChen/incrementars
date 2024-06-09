@@ -7,7 +7,7 @@ use incrementars::*;
 struct Args {
     // this actually causes stack overflow if number too big... we're using too much stack.
     // but I guess it's not that big of a deal if we don't allocate million of nodes.
-    #[arg(short, long, default_value_t = 168000)]
+    #[arg(short, long, default_value_t = 10000)]
     count: u32,
 }
 
@@ -28,9 +28,10 @@ pub fn main() {
     compute.stablize();
     let end = std::time::Instant::now();
     println!(
-        "time: {:?}, throughput: {:.0} k nodes/sec, nanos per node: {:.2}",
+        "time: {:?}, throughput: {:.0} k nodes/sec, nanos per node: {:.2}. Final value: {:.2}",
         end - start,
         (args.count as f64) / (end - start).as_secs_f64() / 1_000.0,
-        (end - start).as_nanos() / (args.count as u128)
+        (end - start).as_nanos() / (args.count as u128),
+        map.observe()
     );
 }

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{Node, Observable};
+use super::traits::{Node, Observable, StablizationCallback};
 
 pub struct _Map1<I, O> {
     pub id: usize,
@@ -15,8 +15,10 @@ impl<I, O> Node for _Map1<I, O> {
     fn id(&self) -> usize {
         self.id
     }
-    fn stablize(&mut self) {
+
+    fn stablize(&mut self) -> Vec<StablizationCallback> {
         self.value = (self.f)(self.input.observe());
+        vec![StablizationCallback::ValueChanged]
     }
     fn depth(&self) -> i32 {
         self.depth
