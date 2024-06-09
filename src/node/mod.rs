@@ -36,7 +36,7 @@ pub struct Incrementars<'a> {
     dependencies: HashMap<usize, Vec<usize>>,
 }
 
-impl<'a> Incrementars<'a> {
+impl<'a: 'static> Incrementars<'a> {
     pub fn new() -> Self {
         Self {
             nodes: vec![],
@@ -112,7 +112,7 @@ impl<'a> Incrementars<'a> {
     pub fn bind<I: 'a, O: 'a>(
         &mut self,
         input: Box<dyn Observable<I>>,
-        f: fn(I) -> Box<dyn Observable<O>>,
+        f: Box<impl Fn(I) -> Box<dyn Observable<O>> + 'a>,
     ) -> Bind1<I, O> {
         let id = self.id_counter;
         self.id_counter += 1;
@@ -247,8 +247,10 @@ mod tests {
     #[test]
     fn test_bind() {
         let mut compute = Incrementars::new();
-        let left = compute.var("Left");
-        let right = compute.var("Right");
+        let left = compute.var(1);
+        let right = compute.var(2);
+        let left_id = traits::Observable::id(&left);
+        let right_id = traits::Observable::id(&right);
 
         #[derive(Debug, Clone, Copy)]
         enum Side {
@@ -258,12 +260,32 @@ mod tests {
 
         let picker = compute.var(Side::Left);
 
-
-        let binder = compute.bind(as_input!(picker), |x| {
-            match x {
-                Side::Left => as_input!(left),
-                Side::Right => as_input!(right),
+        fn pick(
+            left: Box<Var<i32>>,
+            right: Box<Var<i32>>,
+        ) -> impl Fn(Side) -> Box<dyn Observable<i32>> {
+            move |side| match side {
+                Side::Left => left.clone(),
+                Side::Right => right.clone(),
             }
-        });
+        }
+
+        let binder = compute.bind(
+            as_input!(picker),
+            Box::new(pick(as_input!(left), as_input!(right))),
+        );
+
+        assert_eq!(
+            compute.dependencies.get(&traits::Observable::id(&right)),
+            Some(vec![left_id]).as_ref()
+        );
+        assert_eq!(binder.observe(), 1);
+        picker.set(Side::Right);
+        compute.stablize();
+        assert_eq!(binder.observe(), 2);
+        assert_eq!(
+            compute.dependencies.get(&traits::Observable::id(&right)),
+            Some(vec![right_id]).as_ref()
+        );
     }
 }
