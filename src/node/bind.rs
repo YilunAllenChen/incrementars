@@ -8,7 +8,7 @@ pub struct _Bind1<I, O> {
     pub depth: i32,
     pub value: Box<dyn Observable<O>>,
     pub input: Box<dyn Observable<I>>,
-    pub f: Box<dyn Fn(I) -> Box<dyn Observable<O>>>,
+    pub f: fn(I) -> Box<dyn Observable<O>>,
 }
 
 impl<I, O> Node for _Bind1<I, O> {

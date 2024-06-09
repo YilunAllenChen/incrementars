@@ -112,7 +112,7 @@ impl<'a> Incrementars<'a> {
     pub fn bind<I: 'a, O: 'a>(
         &mut self,
         input: Box<dyn Observable<I>>,
-        f: Box<dyn Fn(I) -> Box<dyn Observable<O>>>,
+        f: fn(I) -> Box<dyn Observable<O>>,
     ) -> Bind1<I, O> {
         let id = self.id_counter;
         self.id_counter += 1;
@@ -259,11 +259,11 @@ mod tests {
         let picker = compute.var(Side::Left);
 
 
-        let binder = compute.bind(as_input!(picker), Box::new(|x| {
+        let binder = compute.bind(as_input!(picker), |x| {
             match x {
                 Side::Left => as_input!(left),
                 Side::Right => as_input!(right),
             }
-        }));
+        });
     }
 }
