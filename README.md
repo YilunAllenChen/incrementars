@@ -40,11 +40,12 @@ let area = compute.map(as_input!(length), |x| {
 
 // on initial stabalization, area is calculated to be 4.
 assert_eq!(area.observe(), 4.0);
-length.set(3.0);
 
 // right after setting, dag isn't stablized yet.
+length.set(3.0);
 assert_eq!(area.observe(), 4.0);
 
+// but after stablizing, new area is calculated to be 9.
 compute.stablize();
 assert_eq!(area.observe(), 9.0);
 
