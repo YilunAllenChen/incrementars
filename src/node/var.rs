@@ -19,6 +19,7 @@ impl<T> Node for _Var<T> {
         self.depth
     }
     fn stablize(&mut self) -> Vec<StablizationCallback> {
+        self.dirty = false;
         vec![StablizationCallback::ValueChanged]
     }
 }

@@ -8,6 +8,8 @@ very experimental incremental-computing framework.
 
 This little project is heavily inspired by Jane Street's [Incremental Computing Library, Incremental](https://github.com/janestreet/incremental).
 
+The original paper is from Umut A. Acar, you can [find it here](https://drive.google.com/file/d/19UcnvDS1_6opK5qZcceuDjHTLmG_9Ovf/view).
+
 ### What's different (and going to be different)?
 
 - Well first of all it's done in Rust 🦀 instead of OCaml 🐫.
@@ -15,12 +17,64 @@ This little project is heavily inspired by Jane Street's [Incremental Computing 
   - Var
   - Map
   - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
-  - Bind2 (allows you to add dynamism to graphs).
+  - Bind (allows you to add dynamism to graphs).
 - Unlike `Incremental` which is fully baked and battle-tested, `Incrementars` is highly experimental, with little to no optimizations applied (yet).
-- I think once I get to it, we can actually harness multithreading to speed things up, unlike OCaml where we're locked on one thread at a time.
 
 ### What's similar?
 
 - Incremental computation (duh)
 - Easy to use interface
 - Strongly typed all the way, and Rust safe.
+
+### A Quick Example
+
+Here's a quick example.
+
+```rust
+let mut compute = Incrementars::new();
+let length = compute.var(2.0);
+let area = compute.map(as_input!(length), |x| {
+    println!("calculating area");
+    x * x
+});
+
+// on initial stabalization, area is calculated to be 4.
+assert_eq!(area.observe(), 4.0);
+length.set(3.0);
+
+// right after setting, dag isn't stablized yet.
+assert_eq!(area.observe(), 4.0);
+
+compute.stablize();
+assert_eq!(area.observe(), 9.0);
+
+println!("introducing height...");
+let height = compute.var(5.0);
+let volume = compute.map2(as_input!(area), as_input!(height), |x, y| {
+    println!("calculating volume");
+    x * y
+});
+
+// on initial stabalization, volume is calculated to be 45.
+assert_eq!(volume.observe(), 45.0);
+
+// note that, just setting height won't cause area calculation to refire!
+height.set(10.0);
+compute.stablize();    // THIS WILL NOT TRIGGER AREA CALCULATION!
+assert_eq!(volume.observe(), 90.0);
+
+// but changing length will.
+length.set(2.0);
+compute.stablize();   // THIS WILL TRIGGER AREA CALCULATION!
+assert_eq!(volume.observe(), 40.0);
+```
+
+## NOTE: What's new in V2
+
+I refactored the original implementation. The original implementation involves passing around two node handles (one
+for reads and one for writes), which at times can feel unergonomic / confusing. The new implementation is much more
+elegant in that it uses a single node handle for both reads and writes, and one uses the proc macro `as_input` to pass
+it around to construct the graph.
+
+Internally, it uses `Rc<RefCell>>` heavily. This is a challenge intrinsic to Rust given how ownerships & borrow checking
+work.

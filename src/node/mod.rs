@@ -295,4 +295,30 @@ mod tests {
         );
         assert_eq!(compute.dependencies.get(&left_id), Some(vec![]).as_ref());
     }
+
+    #[test]
+    fn test_real_life() {
+        let mut compute = Incrementars::new();
+        let length = compute.var(2.0);
+        let area = compute.map(as_input!(length), |x| x * x);
+
+        // on initial stabalization, area is calculated to be 4.
+        assert_eq!(area.observe(), 4.0);
+        length.set(3.0);
+
+        // right after setting, dag isn't stablized yet.
+        assert_eq!(area.observe(), 4.0);
+
+        compute.stablize();
+        assert_eq!(area.observe(), 9.0);
+
+        let height = compute.var(5.0);
+        let volume = compute.map2(as_input!(area), as_input!(height), |x, y| x * y);
+
+        assert_eq!(volume.observe(), 45.0);
+
+        height.set(10.0);
+        compute.stablize();
+        assert_eq!(volume.observe(), 90.0);
+    }
 }

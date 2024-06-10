@@ -11,7 +11,7 @@ struct Args {
     count: u32,
 }
 
-pub fn main() {
+pub fn perf_test() {
     let args = Args::parse();
 
     let mut compute = Incrementars::new();
@@ -34,4 +34,40 @@ pub fn main() {
         (end - start).as_nanos() / (args.count as u128),
         map.observe()
     );
+}
+
+pub fn main() {
+    let mut compute = Incrementars::new();
+    let length = compute.var(2.0);
+    let area = compute.map(as_input!(length), |x| {
+        println!("calculating area");
+        x * x
+    });
+
+    // on initial stabalization, area is calculated to be 4.
+    assert_eq!(area.observe(), 4.0);
+    length.set(3.0);
+
+    // right after setting, dag isn't stablized yet.
+    assert_eq!(area.observe(), 4.0);
+
+    compute.stablize();
+    assert_eq!(area.observe(), 9.0);
+
+    println!("introducing height...");
+    let height = compute.var(5.0);
+    let volume = compute.map2(as_input!(area), as_input!(height), |x, y| {
+        println!("calculating volume");
+        x * y
+    });
+
+    assert_eq!(volume.observe(), 45.0);
+
+    height.set(10.0);
+    compute.stablize();
+    assert_eq!(volume.observe(), 90.0);
+
+    length.set(2.0);
+    compute.stablize();
+    assert_eq!(volume.observe(), 40.0);
 }
