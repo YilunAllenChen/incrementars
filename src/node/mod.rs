@@ -117,19 +117,23 @@ impl<'a: 'static> Incrementars<'a> {
         let id = self.id_counter;
         self.id_counter += 1;
         let input_id = input.id();
-        match self.dependencies.get_mut(&input_id) {
-            Some(input_deps) => input_deps.push(id),
-            None => {
-                self.dependencies.insert(input_id, vec![id]);
-            }
-        }
+        let value = (f)(input.observe());
+        let value_id = value.id();
         let node = Rc::new(RefCell::new(_Bind1 {
             id,
             depth: input.depth() - 1,
-            value: (f)(input.observe()),
+            value,
             input,
             f,
         }));
+        [input_id, value_id]
+            .iter()
+            .for_each(|x| match self.dependencies.get_mut(x) {
+                Some(deps) => deps.push(id),
+                None => {
+                    self.dependencies.insert(*x, vec![id]);
+                }
+            });
         self.nodes.push(node.clone());
         Bind1 { node }
     }
@@ -274,18 +278,21 @@ mod tests {
             as_input!(picker),
             Box::new(pick(as_input!(left), as_input!(right))),
         );
+        let binder_id = binder.id();
 
         assert_eq!(
-            compute.dependencies.get(&traits::Observable::id(&right)),
-            Some(vec![left_id]).as_ref()
+            compute.dependencies.get(&left_id),
+            Some(vec![binder.id()]).as_ref()
         );
+        assert_eq!(compute.dependencies.get(&right_id), None);
         assert_eq!(binder.observe(), 1);
         picker.set(Side::Right);
         compute.stablize();
         assert_eq!(binder.observe(), 2);
         assert_eq!(
-            compute.dependencies.get(&traits::Observable::id(&right)),
-            Some(vec![right_id]).as_ref()
+            compute.dependencies.get(&right_id),
+            Some(vec![binder_id]).as_ref()
         );
+        assert_eq!(compute.dependencies.get(&left_id), Some(vec![]).as_ref());
     }
 }
