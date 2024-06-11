@@ -22,6 +22,9 @@ impl<T> Node for _Var<T> {
         self.dirty = false;
         vec![StablizationCallback::ValueChanged]
     }
+    fn adjust_depth(&mut self, _: i32) {
+        panic!("Var height should not change");
+    }
 }
 
 impl<T> _Var<T> {

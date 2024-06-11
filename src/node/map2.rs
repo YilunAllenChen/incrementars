@@ -23,6 +23,10 @@ impl<I1, I2, O> Node for _Map2<I1, I2, O> {
     fn depth(&self) -> i32 {
         self.depth
     }
+
+    fn adjust_depth(&mut self, new_depth: i32) {
+        self.depth = new_depth;
+    }
 }
 
 pub struct Map2<I1, I2, O> {

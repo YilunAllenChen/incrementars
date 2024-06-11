@@ -7,6 +7,7 @@ pub trait Node {
     fn id(&self) -> usize;
     fn stablize(&mut self) -> Vec<StablizationCallback>;
     fn depth(&self) -> i32;
+    fn adjust_depth(&mut self, new_depth: i32);
 }
 
 pub trait Observable<T> {

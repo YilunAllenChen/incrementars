@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cmp::min;
 use std::collections::{BinaryHeap, HashMap};
 use std::ops::Deref;
@@ -180,7 +181,18 @@ impl<'a: 'static> Incrementars<'a> {
                             None => {
                                 self.dependencies.insert(*id, vec![head_id]);
                             }
-                        })
+                        });
+                    if let Some(raw_depth) = to
+                        .iter()
+                        .map(|id| self.nodes.get(*id).unwrap().deref().borrow().depth())
+                        .min()
+                    {
+                        let old_depth = node.deref().borrow().depth();
+                        let new_depth = raw_depth - 1;
+                        if new_depth < old_depth {
+                            node.deref().borrow_mut().adjust_depth(new_depth)
+                        }
+                    }
                 }
             })
         }
