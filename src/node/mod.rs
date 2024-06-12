@@ -119,9 +119,10 @@ impl<'a: 'static> Incrementars<'a> {
         let input_id = input.id();
         let value = (f)(input.observe());
         let value_id = value.id();
+        let depth = min(input.depth(), value.depth()) - 1;
         let node = Rc::new(RefCell::new(_Bind1 {
             id,
-            depth: input.depth() - 1,
+            depth,
             value,
             input,
             f,
@@ -181,20 +182,53 @@ impl<'a: 'static> Incrementars<'a> {
                                 self.dependencies.insert(*id, vec![head_id]);
                             }
                         });
-                    if let Some(raw_depth) = to
-                        .iter()
-                        .map(|id| self.nodes.get(*id).unwrap().deref().borrow().depth())
-                        .min()
-                    {
-                        let old_depth = node.deref().borrow().depth();
-                        let new_depth = raw_depth - 1;
-                        if new_depth < old_depth {
-                            node.deref().borrow_mut().adjust_depth(new_depth)
+
+                    let adjust_start_id = node.deref().borrow().id();
+                    let mut adjust_queue = vec![adjust_start_id];
+
+                    while let Some(node_id) = adjust_queue.pop() {
+                        let min_upstream_depth = self
+                            .dependencies
+                            .iter()
+                            .filter_map(|(other, deps)| {
+                                if deps.contains(&node_id) {
+                                    Some(self.nodes.get(*other).unwrap().deref().borrow().depth())
+                                } else {
+                                    None
+                                }
+                            })
+                            .min();
+
+                        if let Some(raw_depth) = min_upstream_depth {
+                            let old_depth =
+                                self.nodes.get(node_id).unwrap().deref().borrow().depth();
+                            let new_depth = raw_depth - 1;
+                            if new_depth < old_depth {
+                                self.nodes
+                                    .get(node_id)
+                                    .unwrap()
+                                    .borrow_mut()
+                                    .adjust_depth(new_depth);
+                                let this_node_id = node.deref().borrow().id();
+                                if let Some(dependencies) = self.dependencies.get(&this_node_id) {
+                                    adjust_queue.extend(dependencies);
+                                }
+                            }
                         }
                     }
                 }
             })
         }
+    }
+
+    pub fn print(&self) {
+        self.dependencies.iter().for_each(|(id, deps)| {
+            println!("dep | {:?} depends on {}", deps, id);
+        });
+        self.nodes.iter().for_each(|node| {
+            let bor = node.deref().borrow();
+            println!("node | {} @ {}", bor.id(), bor.depth());
+        })
     }
 }
 
@@ -203,67 +237,66 @@ mod tests {
     use super::*;
     #[test]
     fn var_instantiation() {
-        let mut compute = Incrementars::new();
-        let var = compute.var(0);
+        let mut dag = Incrementars::new();
+        let var = dag.var(0);
         var.set(10);
         assert_eq!(var.observe(), 10);
     }
 
     #[test]
     fn map_instantiation() {
-        let mut compute = Incrementars::new();
-        let var = compute.var(0);
-        let map = compute.map(Box::new(var), |x| x + 1);
+        let mut dag = Incrementars::new();
+        let var = dag.var(0);
+        let map = dag.map(Box::new(var), |x| x + 1);
         assert_eq!(map.observe(), 1);
     }
 
     #[test]
     fn bifurcate() {
-        let mut compute = Incrementars::new();
-        let var = compute.var(0);
-        let map = compute.map(as_input!(var), |x| x + 1);
-        let map2 = compute.map(as_input!(var), |x| x + 1);
+        let mut dag = Incrementars::new();
+        let var = dag.var(0);
+        let map = dag.map(as_input!(var), |x| x + 1);
+        let map2 = dag.map(as_input!(var), |x| x + 1);
         assert_eq!(map.observe(), 1);
         assert_eq!(map2.observe(), 1);
 
         var.set(10);
         assert_eq!(map.observe(), 1);
-        compute.stablize();
+        dag.stablize();
         assert_eq!(map.observe(), 11);
         assert_eq!(map2.observe(), 11);
     }
 
     #[test]
     fn test_map2() {
-        let mut compute = Incrementars::new();
-        let var1 = compute.var(50);
-        let var2 = compute.var(" dollars");
-        let map2 = compute.map2(as_input!(var1), as_input!(var2), |x, y| x.to_string() + y);
+        let mut dag = Incrementars::new();
+        let var1 = dag.var(50);
+        let var2 = dag.var(" dollars");
+        let map2 = dag.map2(as_input!(var1), as_input!(var2), |x, y| x.to_string() + y);
         assert_eq!(map2.observe(), "50 dollars");
     }
 
     #[test]
     fn test_combinatoric() {
-        let mut compute = Incrementars::new();
-        let var1 = compute.var(50);
+        let mut dag = Incrementars::new();
+        let var1 = dag.var(50);
         let plus_one = |x| x + 1;
-        let var21 = compute.map(as_input!(var1), plus_one.clone());
-        let var22 = compute.map(as_input!(var21), plus_one.clone());
-        let var23 = compute.map(as_input!(var22), plus_one.clone());
-        let var31 = compute.map(as_input!(var1), plus_one.clone());
-        let rejoin = compute.map2(as_input!(var31), as_input!(var23), |x, y| x + y);
-        println!("Dependencies: {:?}", compute.dependencies);
+        let var21 = dag.map(as_input!(var1), plus_one.clone());
+        let var22 = dag.map(as_input!(var21), plus_one.clone());
+        let var23 = dag.map(as_input!(var22), plus_one.clone());
+        let var31 = dag.map(as_input!(var1), plus_one.clone());
+        let rejoin = dag.map2(as_input!(var31), as_input!(var23), |x, y| x + y);
 
         var1.set(10);
-        compute.stablize();
+        dag.stablize();
         assert_eq!(rejoin.observe(), 24);
     }
 
     #[test]
     fn test_bind() {
-        let mut compute = Incrementars::new();
-        let left = compute.var(1);
-        let right = compute.var(2);
+        let mut dag = Incrementars::new();
+        let left = dag.var(1);
+        let right = dag.var(2);
         let left_id = traits::Observable::id(&left);
         let right_id = traits::Observable::id(&right);
 
@@ -273,7 +306,7 @@ mod tests {
             Right,
         }
 
-        let picker = compute.var(Side::Left);
+        let picker = dag.var(Side::Left);
 
         fn pick(
             left: Box<Var<i32>>,
@@ -285,33 +318,78 @@ mod tests {
             }
         }
 
-        let binder = compute.bind(
+        let binder = dag.bind(
             as_input!(picker),
             Box::new(pick(as_input!(left), as_input!(right))),
         );
         let binder_id = binder.id();
 
         assert_eq!(
-            compute.dependencies.get(&left_id),
+            dag.dependencies.get(&left_id),
             Some(vec![binder.id()]).as_ref()
         );
-        assert_eq!(compute.dependencies.get(&right_id), None);
+        assert_eq!(dag.dependencies.get(&right_id), None);
         assert_eq!(binder.observe(), 1);
         picker.set(Side::Right);
-        compute.stablize();
+        dag.stablize();
         assert_eq!(binder.observe(), 2);
         assert_eq!(
-            compute.dependencies.get(&right_id),
+            dag.dependencies.get(&right_id),
             Some(vec![binder_id]).as_ref()
         );
-        assert_eq!(compute.dependencies.get(&left_id), Some(vec![]).as_ref());
+        assert_eq!(dag.dependencies.get(&left_id), Some(vec![]).as_ref());
+    }
+
+    #[test]
+    fn test_bind_adjust_height_propagaion() {
+        let mut dag = Incrementars::new();
+        let left_root = dag.var(1);
+        let right_root = dag.var(-1);
+        let left_map = dag.map(as_input!(left_root), |x| x * 2);
+
+        #[derive(Debug, Clone, Copy)]
+        enum Side {
+            Left,
+            Right,
+        }
+
+        let picker = dag.var(Side::Right);
+
+        fn pick(
+            left: Box<Map1<i32, i32>>,
+            right: Box<Var<i32>>,
+        ) -> impl Fn(Side) -> Box<dyn Observable<i32>> {
+            move |side| match side {
+                Side::Left => left.clone(),
+                Side::Right => right.clone(),
+            }
+        }
+
+        let binder = dag.bind(
+            as_input!(picker),
+            Box::new(pick(as_input!(left_map), as_input!(right_root))),
+        );
+
+        let map_after_bind = dag.map(as_input!(binder), |n| n * 10);
+        let binder_old_depth = binder.depth();
+        let mabind_old_depth = map_after_bind.depth();
+
+        dag.print();
+        picker.set(Side::Left);
+        dag.stablize();
+        dag.print();
+        let binder_new_depth = binder.depth();
+        let mabind_new_depth = map_after_bind.depth();
+
+        assert_eq!(binder_new_depth, binder_old_depth - 1);
+        assert_eq!(mabind_new_depth, mabind_old_depth - 1);
     }
 
     #[test]
     fn test_real_life() {
-        let mut compute = Incrementars::new();
-        let length = compute.var(2.0);
-        let area = compute.map(as_input!(length), |x| x * x);
+        let mut dag = Incrementars::new();
+        let length = dag.var(2.0);
+        let area = dag.map(as_input!(length), |x| x * x);
 
         // on initial stabalization, area is calculated to be 4.
         assert_eq!(area.observe(), 4.0);
@@ -320,16 +398,16 @@ mod tests {
         // right after setting, dag isn't stablized yet.
         assert_eq!(area.observe(), 4.0);
 
-        compute.stablize();
+        dag.stablize();
         assert_eq!(area.observe(), 9.0);
 
-        let height = compute.var(5.0);
-        let volume = compute.map2(as_input!(area), as_input!(height), |x, y| x * y);
+        let height = dag.var(5.0);
+        let volume = dag.map2(as_input!(area), as_input!(height), |x, y| x * y);
 
         assert_eq!(volume.observe(), 45.0);
 
         height.set(10.0);
-        compute.stablize();
+        dag.stablize();
         assert_eq!(volume.observe(), 90.0);
     }
 }
