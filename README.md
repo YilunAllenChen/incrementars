@@ -17,9 +17,8 @@ The original paper is from Umut A. Acar, you can [find it here](https://drive.go
   - Var
   - Map
   - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
-  - Bind (allows you to add dynamism to graphs, though not stable yet because of the lack of heigh adjustments).
+  - Bind (allows you to add dynamism to graphs).
 - Unlike `Incremental` which is fully baked and battle-tested, `Incrementars` is highly experimental, with little to no optimizations applied (yet).
-- Although topological sort has been implemented, dynamic height adjustments hasn't been implemented yet. This means that if you use `bind` to point at nodes, `bind` won't guarantee to have the correct height.
 
 ### What's similar?
 
