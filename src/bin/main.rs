@@ -15,11 +15,11 @@ struct Args {
     #[arg(short, long, default_value_t = 150000)]
     expand_nodes: u32,
 
-    #[arg(short, long, default_value_t = 150000)]
+    #[arg(short, long, default_value_t = 100000)]
     join_nodes: u32,
 }
 
-pub fn perf() {
+pub fn perf_test() {
     struct Metrics {
         name: &'static str,
         num_node: u32,
@@ -102,16 +102,25 @@ pub fn perf() {
             .collect::<Vec<_>>();
         let mut queue = vars
             .chunks(2)
-            .map(|vars| dag.map2(as_input!(vars[0]), as_input!(vars[1]), |x, y| x + y))
+            .filter_map(|vars| match vars.len() {
+                2 => Some(dag.map2(as_input!(vars[0]), as_input!(vars[1]), |x, y| x + y)),
+                1 => None,
+                _ => panic!("wtf?"),
+            })
             .collect::<Vec<_>>();
 
         count += queue.len() as u32;
 
         while queue.len() > 2 {
             let in1 = queue.pop().unwrap();
-            let in2 = queue.pop().unwrap();
-            queue.push(dag.map2(as_input!(in1), as_input!(in2), |x, y| x + y));
-            count += 1;
+            let in2 = queue.pop();
+            match in2 {
+                Some(in2) => {
+                    queue.push(dag.map2(as_input!(in1), as_input!(in2), |x, y| x + y));
+                    count += 2;
+                }
+                None => continue,
+            }
         }
 
         vars.into_iter().for_each(|n| n.set(n.observe() + 1));
@@ -124,7 +133,7 @@ pub fn perf() {
             name: "join",
             num_node: count,
             total_time_ms: (end - start).as_secs_f64() * 1e3,
-            per_node: ((end - start).as_secs_f64() / count as f64 * 1e9).round(),
+            per_node: ((end - start).as_secs_f64() * 1e9 / count as f64).round(),
         }
     }
 
@@ -165,5 +174,5 @@ pub fn perf() {
 }
 
 pub fn main() {
-    perf()
+    perf_test()
 }
