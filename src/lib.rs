@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use std::borrow::BorrowMut;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
@@ -15,7 +16,7 @@ fn next_id() -> usize {
 pub trait Node<O> {
     fn id(&self) -> NodeID;
     fn observe(&self) -> &O;
-    fn re_evaluate(&mut self);
+    fn stablize(&mut self);
     fn height(&self) -> usize;
 }
 
@@ -30,6 +31,10 @@ pub fn var<O>(value: O) -> Rc<RefCell<Var<O>>> {
 /// Just peek at the value, not enforcing stablization
 pub fn peek<T: Copy>(node: Rc<RefCell<dyn Node<T>>>) -> T {
     *node.deref().borrow().observe()
+}
+
+pub fn stablize<T>(node: Rc<RefCell<dyn Node<T>>>) {
+    node.deref().borrow_mut().stablize();
 }
 
 pub fn map1<I, O>(input: Rc<RefCell<dyn Node<I>>>, fun: fn(&I) -> O) -> Rc<RefCell<Map1<I, O>>> {
@@ -56,7 +61,7 @@ impl<T> Node<T> for Var<T> {
     fn observe(&self) -> &T {
         &self.value
     }
-    fn re_evaluate(&mut self) {
+    fn stablize(&mut self) {
         self.dirty = false
     }
     fn height(&self) -> usize {
@@ -85,8 +90,8 @@ impl<T, I> Node<T> for Map1<I, T> {
     fn observe(&self) -> &T {
         &self.value
     }
-    fn re_evaluate(&mut self) {
-        self.input.borrow_mut().re_evaluate();
+    fn stablize(&mut self) {
+        self.input.deref().borrow_mut().stablize();
         self.value = (self.fun)(self.input.deref().borrow().observe())
     }
     fn height(&self) -> usize {
