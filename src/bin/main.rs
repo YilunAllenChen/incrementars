@@ -19,7 +19,7 @@ struct Args {
     join_nodes: u32,
 }
 
-pub fn perf_test() {
+pub fn perf() {
     struct Metrics {
         name: &'static str,
         num_node: u32,
@@ -128,64 +128,42 @@ pub fn perf_test() {
         }
     }
 
-    vec![linear, expand, join]
+    fn iter(_args: &Args) -> Metrics {
+        let layers = 1_000;
+        let iter = 30_000;
+        let mut count = 0;
+
+        let mut dag = Incrementars::new();
+        let var = dag.var(0);
+        let map0 = dag.map(as_input!(var), |x| x);
+        let mut queues: Vec<Box<Map1<i32, i32>>> = vec![as_input!(map0)];
+        for _ in 0..layers / 2 {
+            let head = queues.pop().unwrap();
+            let out1 = dag.map(head.clone(), |x| x);
+            let out2 = dag.map(head, |x| x);
+            queues.push(as_input!(out1));
+            queues.push(as_input!(out2));
+            count += 2;
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..iter {
+            var.set(10);
+            dag.stablize();
+        }
+        let end = std::time::Instant::now();
+        Metrics {
+            name: "expand",
+            num_node: count,
+            total_time_ms: (end - start).as_secs_f64() * 1e3 / iter as f64,
+            per_node: ((end - start).as_secs_f64() / count as f64 * 1e9 / iter as f64).round(),
+        }
+    }
+
+    vec![linear, expand, join, iter]
         .into_iter()
         .for_each(|fun| fun(&args).display());
 }
 
-pub fn example() {
-    let mut dag = Incrementars::new();
-    let length = dag.var(2.0);
-    let area = dag.map(as_input!(length), |x| {
-        println!("calculating area");
-        x * x
-    });
-
-    // on initial stabalization, area is calculated to be 4.
-    assert_eq!(area.observe(), 4.0);
-    length.set(3.0);
-
-    // right after setting, dag isn't stablized yet.
-    assert_eq!(area.observe(), 4.0);
-
-    dag.stablize();
-    assert_eq!(area.observe(), 9.0);
-
-    println!("introducing height...");
-    let height = dag.var(5.0);
-    let volume = dag.map2(as_input!(area), as_input!(height), |x, y| {
-        println!("calculating volume");
-        x * y
-    });
-
-    assert_eq!(volume.observe(), 45.0);
-
-    height.set(10.0);
-    dag.stablize();
-    assert_eq!(volume.observe(), 90.0);
-
-    length.set(2.0);
-    dag.stablize();
-    assert_eq!(volume.observe(), 40.0);
-}
-
-pub fn only_run_once() {
-    let mut dag = Incrementars::new();
-    let root = dag.var(10);
-    let left1 = dag.map(as_input!(root), |x| x + 1);
-    let left2 = dag.map(as_input!(left1), |x| x + 1);
-    let left3 = dag.map(as_input!(left2), |x| x + 1);
-    let right = dag.map(as_input!(root), |x| x * 2);
-    dag.map2(as_input!(left3), as_input!(right), |x, y| {
-        println!("left: {}, right: {}", x, y)
-    });
-
-    root.set(20);
-    dag.stablize();
-}
-
 pub fn main() {
-    perf_test()
-    // only_run_once()
+    perf()
 }
-
