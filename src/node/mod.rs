@@ -3,10 +3,13 @@ use std::collections::{BinaryHeap, HashMap};
 use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
+use bitmap::Bitmap;
+
 use traits::StablizationCallback;
 
 use self::traits::MaybeDirty;
 mod bind;
+mod bitmap;
 mod map;
 mod map2;
 mod traits;
@@ -148,21 +151,25 @@ impl<'a: 'static> Incrementars<'a> {
             .map(|node| (node.depth(), node.id()))
             .collect::<BinaryHeap<(i32, usize)>>();
 
-        let mut last_id = usize::MAX;
+        let mut visited = Bitmap::new(self.nodes.len());
 
         while let Some((_h, head_id)) = queue.pop() {
             let node = &self.nodes[head_id];
-            if head_id == last_id {
-                return;
-            }
-            last_id = head_id;
             let res = node.deref().borrow_mut().stablize();
             res.into_iter().for_each(|cb| match cb {
                 StablizationCallback::ValueChanged => match self.dependencies.get(&head_id) {
-                    Some(dependent_ids) => dependent_ids.iter().for_each(|id| {
-                        let height = self.nodes[*id].deref().borrow().depth();
-                        queue.push((height, *id));
-                    }),
+                    Some(dependent_ids) => {
+                        dependent_ids.iter().for_each(|id| {
+                            // because pseudoheight guarantees that all nodes must fire *after* all
+                            // of its dependencies fire, node needs to only be fired once. Skip if
+                            // we have already visited this node.
+                            if !visited.contains(id) {
+                                visited.insert(*id);
+                                let depth = self.nodes[*id].deref().borrow().depth();
+                                queue.push((depth, *id));
+                            }
+                        })
+                    }
                     None => {}
                 },
                 StablizationCallback::DependenciesUpdated { from, to } => {
@@ -234,6 +241,8 @@ impl<'a: 'static> Incrementars<'a> {
 
 #[cfg(test)]
 mod tests {
+    use lazy_static::lazy_static;
+
     use super::*;
     #[test]
     fn var_instantiation() {
@@ -409,5 +418,40 @@ mod tests {
         height.set(10.0);
         dag.stablize();
         assert_eq!(volume.observe(), 90.0);
+    }
+
+    #[test]
+    fn test_combinatorical_only_fire_once_at_combine() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Define a global static AtomicUsize counter
+        lazy_static! {
+            static ref GLOBAL_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        }
+
+        fn increment_counter() {
+            GLOBAL_COUNTER.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn get_counter() -> usize {
+            GLOBAL_COUNTER.load(Ordering::SeqCst)
+        }
+
+        let mut dag = Incrementars::new();
+        let var1 = dag.var(1);
+        let plus_one = |x| x + 1;
+        let left1 = dag.map(as_input!(var1), plus_one.clone());
+        let left2 = dag.map(as_input!(left1), plus_one.clone());
+        let left3 = dag.map(as_input!(left2), plus_one.clone());
+
+        let right = dag.map(as_input!(var1), plus_one.clone());
+
+        fn incr_counter(x: i32, y: i32) -> i32 {
+            increment_counter();
+            x + y
+        }
+
+        dag.map2(as_input!(left3), as_input!(right), incr_counter);
+        assert_eq!(get_counter(), 1);
     }
 }
