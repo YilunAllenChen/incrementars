@@ -1,89 +1,110 @@
-use std::{
-    borrow::Borrow,
-    cell::{Ref, RefCell},
-    ops::Deref,
-    rc::Rc,
-};
-
-pub mod prelude {}
+use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 type NodeID = usize;
 
-pub trait Node {
-    fn id(&self) -> NodeID;
-    fn depth(&self);
-    fn stablize(&self);
+static GLOBAL_COUNTER: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(0));
+
+fn next_id() -> usize {
+    let id = GLOBAL_COUNTER.load(Ordering::SeqCst);
+    GLOBAL_COUNTER.fetch_add(1, Ordering::SeqCst);
+    id
 }
 
-pub trait Observable<T> {
+pub trait Node<O> {
     fn id(&self) -> NodeID;
-    fn observe(&self) -> &T;
+    fn observe(&self) -> &O;
+    fn re_evaluate(&mut self);
+    fn height(&self) -> usize;
+}
+
+pub fn var<O>(value: O) -> Rc<RefCell<Var<O>>> {
+    Rc::new(RefCell::new(Var {
+        id: next_id(),
+        value,
+        dirty: false,
+    }))
+}
+
+/// Just peek at the value, not enforcing stablization
+pub fn peek<T: Copy>(node: Rc<RefCell<dyn Node<T>>>) -> T {
+    *node.deref().borrow().observe()
+}
+
+pub fn map1<I, O>(input: Rc<RefCell<dyn Node<I>>>, fun: fn(&I) -> O) -> Rc<RefCell<Map1<I, O>>> {
+    let value = fun(&input.deref().borrow().observe());
+    let height = input.borrow().deref().height() - 1;
+    Rc::new(RefCell::new(Map1 {
+        id: next_id(),
+        fun,
+        height,
+        value,
+        input,
+    }))
 }
 
 pub struct Var<T> {
     id: NodeID,
     value: T,
+    dirty: bool,
+}
+impl<T> Node<T> for Var<T> {
+    fn id(&self) -> NodeID {
+        self.id
+    }
+    fn observe(&self) -> &T {
+        &self.value
+    }
+    fn re_evaluate(&mut self) {
+        self.dirty = false
+    }
+    fn height(&self) -> usize {
+        usize::MAX
+    }
 }
 
 impl<T> Var<T> {
-    fn new(id: NodeID, value: T) -> Self {
-        Self { id, value }
+    pub fn set(&mut self, new: T) {
+        self.value = new
     }
 }
 
-impl<T> Observable<T> for Var<T> {
-    fn id(&self) -> NodeID {
-        self.id
-    }
-    fn observe(&self) -> &T {
-        &self.value
-    }
-}
-
-pub struct Map1<'a, I: 'a, O> {
+pub struct Map1<I, O> {
     id: usize,
-    fun: &'a dyn Fn(&I) -> O,
+    fun: fn(&I) -> O,
+    height: usize,
     value: O,
-    input: Rc<RefCell<dyn Observable<I>>>,
+    input: Rc<RefCell<dyn Node<I>>>,
 }
 
-impl<'a, T: 'a, I> Observable<T> for Map1<'a, I, T> {
+impl<T, I> Node<T> for Map1<I, T> {
     fn id(&self) -> NodeID {
         self.id
     }
     fn observe(&self) -> &T {
         &self.value
     }
-}
-
-impl<'a, I, O> Map1<'a, I, O> {
-    fn new(id: NodeID, fun: &'a dyn Fn(&I) -> O, input: Rc<RefCell<dyn Observable<I>>>) -> Self {
-        let in_clone = input.clone();
-        let borrowed = in_clone.deref().borrow();
-        let value = fun(borrowed.observe());
-        Self {
-            id,
-            fun,
-            value,
-            input,
-        }
+    fn re_evaluate(&mut self) {
+        self.input.borrow_mut().re_evaluate();
+        self.value = (self.fun)(self.input.deref().borrow().observe())
+    }
+    fn height(&self) -> usize {
+        self.height
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Map1;
-
     use super::*;
     #[test]
     fn var_instantiation() {
-        let _ = Var::new(1, 10);
+        let _ = var(10);
     }
 
     #[test]
     fn map_instantiation() {
-        let var = Var::new(1, 10);
-        let var_rc = Rc::new(RefCell::new(var));
-        let map1 = Map1::new(2, &|x| x + 1, var_rc);
+        let var = var(10);
+        let _var_rc = map1(var, |x| x + 1);
     }
 }
