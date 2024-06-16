@@ -3,10 +3,15 @@ use incrementars::{
     as_input,
     prelude::{Incrementars, Map1},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("linear", |b| {
+    let mut cri = c.benchmark_group("custom");
+
+    cri.warm_up_time(Duration::from_millis(50))
+        .measurement_time(Duration::from_secs(1));
+
+    cri.bench_function("linear", |b| {
         b.iter(move || {
             let count = 100_000;
             let mut dag = Incrementars::new();
@@ -22,9 +27,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     });
 
-    let mut group = c.benchmark_group("linear with params");
     for input in [100, 1_000, 10_000, 100_000] {
-        group.bench_with_input(BenchmarkId::from_parameter(input), &input, |b, &i| {
+        cri.bench_with_input(BenchmarkId::from_parameter(input), &input, |b, &i| {
             b.iter(move || {
                 let count = i;
                 let mut dag = Incrementars::new();
