@@ -446,9 +446,8 @@ mod tests {
 
         let right = dag.map(as_input!(var1), plus_one.clone());
 
-        fn incr_counter(x: i32, y: i32) -> i32 {
+        fn incr_counter(_: i32, _: i32) {
             increment_counter();
-            x + y
         }
 
         dag.map2(as_input!(left3), as_input!(right), incr_counter);
