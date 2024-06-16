@@ -45,3 +45,11 @@ impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
         self.node.deref().borrow().depth
     }
 }
+
+impl<I1, I2, O> Clone for Map2<I1, I2, O> {
+    fn clone(&self) -> Self {
+        Self {
+            node: self.node.clone(),
+        }
+    }
+}
