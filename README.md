@@ -76,8 +76,7 @@ pub fn main() {
 
 I refactored the original implementation. The original implementation involves passing around two node handles (one
 for reads and one for writes), which at times can feel unergonomic / confusing. The new implementation is much more
-elegant in that it uses a single node handle for both reads and writes, and one uses the proc macro `as_input` to pass
-it around to construct the graph.
+elegant in that it uses a single node handle for both reads and writes.
 
 Internally, it uses `Rc<RefCell>>` heavily. This is a challenge intrinsic to Rust given how ownerships & borrow checking
 work.
