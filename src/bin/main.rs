@@ -3,7 +3,7 @@ use std::ops::Deref;
 use incrementars::{map1, peek, stablize, var};
 
 pub fn main() {
-    let count = 150000;
+    let count = 100000;
     let var = var(0);
     let mut map = map1(var.clone(), |x| x + 1);
     for _ in 0..count {
