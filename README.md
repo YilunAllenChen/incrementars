@@ -6,25 +6,25 @@ very experimental incremental-computing framework.
 
 # Background
 
-This little project is heavily inspired by Jane Street's [Incremental Computing Library, Incremental](https://github.com/janestreet/incremental).
+Original paper is from Umut A. Acar, you can [find it here](https://drive.google.com/file/d/19UcnvDS1_6opK5qZcceuDjHTLmG_9Ovf/view).
 
-The original paper is from Umut A. Acar, you can [find it here](https://drive.google.com/file/d/19UcnvDS1_6opK5qZcceuDjHTLmG_9Ovf/view).
+Heavily inspired by Jane Street's [Incremental Computing Library, Incremental](https://github.com/janestreet/incremental).
 
 ### What's different (and going to be different)?
 
-- Well first of all it's done in Rust 🦀 instead of OCaml 🐫.
 - Only some of the core features are implemented.
   - Var
   - Map
   - Map2 (technically with the three above, you can already construct any arbitrary statically-structured graphs).
   - Bind (allows you to add dynamism to graphs).
-- Unlike `Incremental` which is fully baked and battle-tested, `Incrementars` is highly experimental, with little to no optimizations applied (yet).
+- No peripheral utilities implemented (hooks, sentinels, etc)
 
 ### What's similar?
 
 - Incremental computation (duh)
 - Easy to use interface
 - Strongly typed all the way, and Rust safe.
+- Blazingly fast!
 
 ### A Quick Example
 
