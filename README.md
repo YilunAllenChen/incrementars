@@ -31,43 +31,45 @@ The original paper is from Umut A. Acar, you can [find it here](https://drive.go
 Here's a quick example.
 
 ```rust
-let mut compute = Incrementars::new();
-let length = compute.var(2.0);
-let area = compute.map(as_input!(length), |x| {
-    println!("calculating area");
-    x * x
-});
+use incrementars::prelude::{Incrementars, Observable};
 
-// on initial stabalization, area is calculated to be 4.
-assert_eq!(area.observe(), 4.0);
+pub fn main() {
+    let mut dag = Incrementars::new();
+    let length = dag.var(2.0);
+    let area = dag.map(length.as_input(), |x| {
+        println!("calculating area");
+        x * x
+    });
 
-// right after setting, dag isn't stablized yet.
-length.set(3.0);
-assert_eq!(area.observe(), 4.0);
+    // on initial stabalization, area is calculated to be 4.
+    assert_eq!(area.observe(), 4.0);
+    length.set(3.0);
 
-// but after stablizing, new area is calculated to be 9.
-compute.stablize();
-assert_eq!(area.observe(), 9.0);
+    // right after setting, dag isn't stablized yet.
+    assert_eq!(area.observe(), 4.0);
 
-println!("introducing height...");
-let height = compute.var(5.0);
-let volume = compute.map2(as_input!(area), as_input!(height), |x, y| {
-    println!("calculating volume");
-    x * y
-});
+    dag.stablize();
+    assert_eq!(area.observe(), 9.0);
 
-// on initial stabalization, volume is calculated to be 45.
-assert_eq!(volume.observe(), 45.0);
+    println!("introducing height...");
+    let height = dag.var(5.0);
+    let volume = dag.map2(area.as_input(), height.as_input(), |x, y| {
+        println!("calculating volume");
+        x * y
+    });
 
-// note that, just setting height won't cause area calculation to refire!
-height.set(10.0);
-compute.stablize();    // THIS WILL NOT TRIGGER AREA CALCULATION!
-assert_eq!(volume.observe(), 90.0);
+    assert_eq!(volume.observe(), 45.0);
 
-// but changing length will.
-length.set(2.0);
-compute.stablize();   // THIS WILL TRIGGER AREA CALCULATION!
-assert_eq!(volume.observe(), 40.0);
+    println!("setting height (this shouldn't trigger area calculation!)");
+    height.set(10.0);
+    dag.stablize();
+    assert_eq!(volume.observe(), 90.0);
+
+    println!("setting length (this should trigger area calculation)");
+    length.set(2.0);
+    dag.stablize();
+    assert_eq!(volume.observe(), 40.0);
+}
 ```
 
 ## NOTE: What's new in V2
