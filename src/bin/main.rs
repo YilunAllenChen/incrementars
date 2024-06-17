@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use clap::Parser;
 use incrementars::prelude::*;
-use incrementars::*;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -44,10 +43,10 @@ pub fn perf_test() {
         let count = args.linear_count;
         let mut dag = Incrementars::new();
         let var = dag.var(0);
-        let mut map: Map1<i32, i32> = dag.map(as_input!(var), |x| x + 1);
+        let mut map: Map1<i32, i32> = dag.map(var.as_input(), |x| x + 1);
 
         for _ in 0..count {
-            map = dag.map(as_input!(map), |x| x + 1);
+            map = dag.map(map.as_input(), |x| x + 1);
         }
 
         // time it
@@ -68,14 +67,14 @@ pub fn perf_test() {
         let mut count = 0;
         let mut dag = Incrementars::new();
         let var = dag.var(0);
-        let map0 = dag.map(as_input!(var), |x| x + 1);
-        let mut queues: Vec<Box<Map1<i32, i32>>> = vec![as_input!(map0)];
+        let map0 = dag.map(var.as_input(), |x| x + 1);
+        let mut queues: Vec<Box<Map1<i32, i32>>> = vec![map0.as_input()];
         for _ in 0..layers / 2 {
             let head = queues.pop().unwrap();
             let out1 = dag.map(head.clone(), |x| x + 1);
             let out2 = dag.map(head, |x| x + 2);
-            queues.push(as_input!(out1));
-            queues.push(as_input!(out2));
+            queues.push(out1.as_input());
+            queues.push(out2.as_input());
             count += 2;
         }
 
@@ -103,7 +102,7 @@ pub fn perf_test() {
         let mut queue = vars
             .chunks(2)
             .filter_map(|vars| match vars.len() {
-                2 => Some(dag.map2(as_input!(vars[0]), as_input!(vars[1]), |x, y| x + y)),
+                2 => Some(dag.map2(vars[0].as_input(), vars[1].as_input(), |x, y| x + y)),
                 1 => None,
                 _ => panic!("wtf?"),
             })
@@ -116,7 +115,7 @@ pub fn perf_test() {
             let in2 = queue.pop();
             match in2 {
                 Some(in2) => {
-                    queue.push(dag.map2(as_input!(in1), as_input!(in2), |x, y| x + y));
+                    queue.push(dag.map2(in1.as_input(), in2.as_input(), |x, y| x + y));
                     count += 2;
                 }
                 None => continue,
@@ -144,14 +143,14 @@ pub fn perf_test() {
 
         let mut dag = Incrementars::new();
         let var = dag.var(0);
-        let map0 = dag.map(as_input!(var), |x| x);
-        let mut queues: Vec<Box<Map1<i32, i32>>> = vec![as_input!(map0)];
+        let map0 = dag.map(var.as_input(), |x| x);
+        let mut queues: Vec<Box<Map1<i32, i32>>> = vec![map0.as_input()];
         for _ in 0..layers / 2 {
             let head = queues.pop().unwrap();
             let out1 = dag.map(head.clone(), |x| x);
             let out2 = dag.map(head, |x| x);
-            queues.push(as_input!(out1));
-            queues.push(as_input!(out2));
+            queues.push(out1.as_input());
+            queues.push(out2.as_input());
             count += 2;
         }
         let start = std::time::Instant::now();

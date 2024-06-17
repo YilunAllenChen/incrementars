@@ -1,12 +1,9 @@
-use incrementars::{
-    as_input,
-    prelude::{Incrementars, Observable},
-};
+use incrementars::prelude::{Incrementars, Observable};
 
 pub fn main() {
     let mut dag = Incrementars::new();
     let length = dag.var(2.0);
-    let area = dag.map(as_input!(length), |x| {
+    let area = dag.map(length.as_input(), |x| {
         println!("calculating area");
         x * x
     });
@@ -23,7 +20,7 @@ pub fn main() {
 
     println!("introducing height...");
     let height = dag.var(5.0);
-    let volume = dag.map2(as_input!(area), as_input!(height), |x, y| {
+    let volume = dag.map2(area.as_input(), height.as_input(), |x, y| {
         println!("calculating volume");
         x * y
     });

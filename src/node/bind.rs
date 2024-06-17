@@ -66,3 +66,9 @@ impl<I, O> Clone for Bind1<I, O> {
         }
     }
 }
+
+impl<I, O> Bind1<I, O> {
+    pub fn as_input(&self) -> Box<Bind1<I, O>> {
+        Box::new(self.clone())
+    }
+}

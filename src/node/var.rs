@@ -79,3 +79,9 @@ impl<T: Clone> Observable<T> for Var<T> {
         self.node.deref().borrow().depth
     }
 }
+
+impl<T> Var<T> {
+    pub fn as_input(&self) -> Box<Var<T>> {
+        Box::new(self.clone())
+    }
+}

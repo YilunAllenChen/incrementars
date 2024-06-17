@@ -52,3 +52,9 @@ impl<I, O> Clone for Map1<I, O> {
         }
     }
 }
+
+impl<I, O> Map1<I, O> {
+    pub fn as_input(&self) -> Box<Map1<I, O>> {
+        Box::new(self.clone())
+    }
+}

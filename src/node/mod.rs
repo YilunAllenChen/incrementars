@@ -22,14 +22,6 @@ pub use self::{
     var::{Var, _Var},
 };
 
-/// Actualy just creating a Box from a clone. Equivalent to `Box::new($e.clone())`
-#[macro_export]
-macro_rules! as_input {
-    ($e:expr) => {
-        Box::new($e.clone())
-    };
-}
-
 pub struct Incrementars<'a> {
     nodes: Vec<Rc<RefCell<dyn Node + 'a>>>,
     id_counter: usize,
@@ -264,8 +256,8 @@ mod tests {
     fn bifurcate() {
         let mut dag = Incrementars::new();
         let var = dag.var(0);
-        let map = dag.map(as_input!(var), |x| x + 1);
-        let map2 = dag.map(as_input!(var), |x| x + 1);
+        let map = dag.map(var.as_input(), |x| x + 1);
+        let map2 = dag.map(var.as_input(), |x| x + 1);
         assert_eq!(map.observe(), 1);
         assert_eq!(map2.observe(), 1);
 
@@ -281,7 +273,7 @@ mod tests {
         let mut dag = Incrementars::new();
         let var1 = dag.var(50);
         let var2 = dag.var(" dollars");
-        let map2 = dag.map2(as_input!(var1), as_input!(var2), |x, y| x.to_string() + y);
+        let map2 = dag.map2(var1.as_input(), var2.as_input(), |x, y| x.to_string() + y);
         assert_eq!(map2.observe(), "50 dollars");
     }
 
@@ -290,11 +282,11 @@ mod tests {
         let mut dag = Incrementars::new();
         let var1 = dag.var(50);
         let plus_one = |x| x + 1;
-        let var21 = dag.map(as_input!(var1), plus_one.clone());
-        let var22 = dag.map(as_input!(var21), plus_one.clone());
-        let var23 = dag.map(as_input!(var22), plus_one.clone());
-        let var31 = dag.map(as_input!(var1), plus_one.clone());
-        let rejoin = dag.map2(as_input!(var31), as_input!(var23), |x, y| x + y);
+        let var21 = dag.map(var1.as_input(), plus_one.clone());
+        let var22 = dag.map(var21.as_input(), plus_one.clone());
+        let var23 = dag.map(var22.as_input(), plus_one.clone());
+        let var31 = dag.map(var1.as_input(), plus_one.clone());
+        let rejoin = dag.map2(var31.as_input(), var23.as_input(), |x, y| x + y);
 
         var1.set(10);
         dag.stablize();
@@ -328,8 +320,8 @@ mod tests {
         }
 
         let binder = dag.bind(
-            as_input!(picker),
-            Box::new(pick(as_input!(left), as_input!(right))),
+            picker.as_input(),
+            Box::new(pick(left.as_input(), right.as_input())),
         );
         let binder_id = binder.id();
 
@@ -354,7 +346,7 @@ mod tests {
         let mut dag = Incrementars::new();
         let left_root = dag.var(1);
         let right_root = dag.var(-1);
-        let left_map = dag.map(as_input!(left_root), |x| x * 2);
+        let left_map = dag.map(left_root.as_input(), |x| x * 2);
 
         #[derive(Debug, Clone, Copy)]
         enum Side {
@@ -375,11 +367,11 @@ mod tests {
         }
 
         let binder = dag.bind(
-            as_input!(picker),
-            Box::new(pick(as_input!(left_map), as_input!(right_root))),
+            picker.as_input(),
+            Box::new(pick(left_map.as_input(), right_root.as_input())),
         );
 
-        let map_after_bind = dag.map(as_input!(binder), |n| n * 10);
+        let map_after_bind = dag.map(binder.as_input(), |n| n * 10);
         let binder_old_depth = binder.depth();
         let mabind_old_depth = map_after_bind.depth();
 
@@ -398,7 +390,7 @@ mod tests {
     fn test_real_life() {
         let mut dag = Incrementars::new();
         let length = dag.var(2.0);
-        let area = dag.map(as_input!(length), |x| x * x);
+        let area = dag.map(length.as_input(), |x| x * x);
 
         // on initial stabalization, area is calculated to be 4.
         assert_eq!(area.observe(), 4.0);
@@ -411,7 +403,7 @@ mod tests {
         assert_eq!(area.observe(), 9.0);
 
         let height = dag.var(5.0);
-        let volume = dag.map2(as_input!(area), as_input!(height), |x, y| x * y);
+        let volume = dag.map2(area.as_input(), height.as_input(), |x, y| x * y);
 
         assert_eq!(volume.observe(), 45.0);
 
@@ -440,17 +432,17 @@ mod tests {
         let mut dag = Incrementars::new();
         let var1 = dag.var(1);
         let plus_one = |x| x + 1;
-        let left1 = dag.map(as_input!(var1), plus_one.clone());
-        let left2 = dag.map(as_input!(left1), plus_one.clone());
-        let left3 = dag.map(as_input!(left2), plus_one.clone());
+        let left1 = dag.map(var1.as_input(), plus_one.clone());
+        let left2 = dag.map(left1.as_input(), plus_one.clone());
+        let left3 = dag.map(left2.as_input(), plus_one.clone());
 
-        let right = dag.map(as_input!(var1), plus_one.clone());
+        let right = dag.map(var1.as_input(), plus_one.clone());
 
         fn incr_counter(_: i32, _: i32) {
             increment_counter();
         }
 
-        dag.map2(as_input!(left3), as_input!(right), incr_counter);
+        dag.map2(left3.as_input(), right.as_input(), incr_counter);
         assert_eq!(get_counter(), 1);
     }
 }
