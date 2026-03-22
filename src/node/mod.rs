@@ -18,14 +18,36 @@ pub use self::{
     bind::Bind1,
     map::Map1,
     map2::Map2,
-    traits::{Node, Observable},
+    traits::Observable,
     var::Var,
 };
 
+// Vars are assigned the maximum depth so that derived nodes, which subtract 1
+// per level, are always processed after their inputs in the stabilization queue.
 const VAR_DEPTH: i32 = 1_000;
 
+/// The incremental computation graph.
+///
+/// Create input nodes with [`var`](Incrementars::var), wire them together with
+/// [`map`](Incrementars::map), [`map2`](Incrementars::map2), and
+/// [`bind`](Incrementars::bind), then call [`stabilize`](Incrementars::stabilize)
+/// to propagate pending changes through the graph.
+///
+/// # Example
+/// ```
+/// use incrementars::prelude::*;
+/// let mut dag = Incrementars::new();
+/// let x = dag.var(2);
+/// let y = dag.map(x.as_input(), |v| v * v);
+/// assert_eq!(y.observe(), 4);
+/// x.set(3);
+/// dag.stabilize();
+/// assert_eq!(y.observe(), 9);
+/// ```
 pub struct Incrementars {
-    nodes: Vec<Rc<RefCell<dyn Node>>>,
+    // node id → node handle. IDs are assigned sequentially from 0 by next_id(),
+    // so the map always contains exactly the keys 0..id_counter.
+    nodes: HashMap<usize, Rc<RefCell<dyn traits::Node>>>,
     id_counter: usize,
 
     inputs: Vec<Box<dyn MaybeDirty>>,
@@ -36,9 +58,10 @@ pub struct Incrementars {
 }
 
 impl Incrementars {
+    /// Creates an empty graph.
     pub fn new() -> Self {
         Self {
-            nodes: vec![],
+            nodes: HashMap::new(),
             id_counter: 0,
             inputs: vec![],
             dependencies: HashMap::new(),
@@ -52,19 +75,36 @@ impl Incrementars {
         id
     }
 
+    /// Adds a directed edge parent → child to both dependency maps.
+    /// Silently deduplicates: calling with the same pair twice has no effect.
     fn add_edge(&mut self, parent_id: usize, child_id: usize) {
-        self.dependencies.entry(parent_id).or_default().push(child_id);
-        self.reverse_dependencies.entry(child_id).or_default().push(parent_id);
+        let deps = self.dependencies.entry(parent_id).or_default();
+        if !deps.contains(&child_id) {
+            deps.push(child_id);
+        }
+        let rev = self.reverse_dependencies.entry(child_id).or_default();
+        if !rev.contains(&parent_id) {
+            rev.push(parent_id);
+        }
     }
 
+    /// Creates an input node holding `value`.
+    ///
+    /// Use [`Var::set`] to update the value. Changes are not visible to downstream
+    /// nodes until the next call to [`stabilize`](Incrementars::stabilize).
     pub fn var<T: Clone + 'static>(&mut self, value: T) -> Var<T> {
         let id = self.next_id();
         let node = Rc::new(RefCell::new(var::_Var::new(id, VAR_DEPTH, value)));
-        self.nodes.push(node.clone());
+        self.nodes.insert(id, node.clone());
         self.inputs.push(Box::new(Var { node: node.clone() }));
         Var { node }
     }
 
+    /// Creates a node that applies `f` to the output of `input` during stabilization.
+    ///
+    /// `f` is only called when `input` has changed since the last stabilization, and
+    /// its result is only propagated downstream if it differs from the previous output
+    /// (cutoff optimization, requires `O: PartialEq`).
     pub fn map<I: 'static, O: PartialEq + 'static>(
         &mut self,
         input: Box<dyn Observable<I>>,
@@ -80,10 +120,15 @@ impl Incrementars {
             input,
             f: Box::new(f),
         }));
-        self.nodes.push(node.clone());
+        self.nodes.insert(id, node.clone());
         Map1 { node }
     }
 
+    /// Creates a node that applies `f` to the outputs of `input1` and `input2`
+    /// during stabilization.
+    ///
+    /// `f` is called when either input has changed, and the result is only propagated
+    /// if it differs from the previous output (cutoff optimization).
     pub fn map2<I1: 'static, I2: 'static, O: PartialEq + 'static>(
         &mut self,
         input1: Box<dyn Observable<I1>>,
@@ -102,10 +147,15 @@ impl Incrementars {
             input2,
             f: Box::new(f),
         }));
-        self.nodes.push(node.clone());
+        self.nodes.insert(id, node.clone());
         Map2 { node }
     }
 
+    /// Creates a node whose upstream dependency can change dynamically.
+    ///
+    /// `f` is called with the current value of `input` to select which node to read
+    /// from. When `input` changes and `f` returns a different node, the graph is
+    /// rewired and node depths are recalculated automatically.
     pub fn bind<I: 'static, O: 'static>(
         &mut self,
         input: Box<dyn Observable<I>>,
@@ -125,10 +175,16 @@ impl Incrementars {
         }));
         self.add_edge(input_id, id);
         self.add_edge(value_id, id);
-        self.nodes.push(node.clone());
+        self.nodes.insert(id, node.clone());
         Bind1 { node }
     }
 
+    /// Propagates all pending changes through the graph.
+    ///
+    /// Dirty input nodes are discovered, then their dependents are processed in
+    /// depth order (upstream before downstream). A node is skipped if its recomputed
+    /// output equals its previous output (cutoff). After this call returns, all
+    /// observable values reflect the latest inputs.
     pub fn stabilize(&mut self) {
         let mut queue = self
             .inputs
@@ -136,7 +192,7 @@ impl Incrementars {
             .filter(|x| x.is_dirty())
             .map(|x| x.id())
             .map(|id| {
-                let node = self.nodes[id].deref().borrow();
+                let node = self.nodes[&id].deref().borrow();
                 (node.depth(), node.id())
             })
             .collect::<BinaryHeap<(i32, usize)>>();
@@ -144,8 +200,7 @@ impl Incrementars {
         let mut visited = Bitmap::new(self.nodes.len());
 
         while let Some((_depth, head_id)) = queue.pop() {
-            let node = &self.nodes[head_id];
-            let callbacks = node.deref().borrow_mut().stabilize();
+            let callbacks = self.nodes[&head_id].deref().borrow_mut().stabilize();
 
             for cb in callbacks {
                 match cb {
@@ -154,7 +209,7 @@ impl Incrementars {
                             for &child_id in children {
                                 if !visited.contains(&child_id) {
                                     visited.insert(child_id);
-                                    let depth = self.nodes[child_id].deref().borrow().depth();
+                                    let depth = self.nodes[&child_id].deref().borrow().depth();
                                     queue.push((depth, child_id));
                                 }
                             }
@@ -171,13 +226,13 @@ impl Incrementars {
                             }
                         }
                         // Add new dependency edges
-                        for to_id in &to {
-                            self.add_edge(*to_id, head_id);
+                        for &to_id in &to {
+                            self.add_edge(to_id, head_id);
                         }
 
                         // Adjust depths for head_id and all its descendants.
-                        // This must go both up and down since the new target may be
-                        // at a different depth than the old one.
+                        // Runs both up and down since the new target may be at a
+                        // different depth than the old one.
                         let mut adjust_queue = vec![head_id];
                         while let Some(node_id) = adjust_queue.pop() {
                             let min_parent_depth = self
@@ -186,15 +241,15 @@ impl Incrementars {
                                 .and_then(|parents| {
                                     parents
                                         .iter()
-                                        .map(|&pid| self.nodes[pid].borrow().depth())
+                                        .map(|&pid| self.nodes[&pid].borrow().depth())
                                         .min()
                                 });
 
                             if let Some(parent_depth) = min_parent_depth {
                                 let new_depth = parent_depth - 1;
-                                let old_depth = self.nodes[node_id].borrow().depth();
+                                let old_depth = self.nodes[&node_id].borrow().depth();
                                 if new_depth != old_depth {
-                                    self.nodes[node_id].borrow_mut().adjust_depth(new_depth);
+                                    self.nodes[&node_id].borrow_mut().adjust_depth(new_depth);
                                     if let Some(children) = self.dependencies.get(&node_id) {
                                         adjust_queue.extend(children.iter().copied());
                                     }
@@ -206,7 +261,6 @@ impl Incrementars {
             }
         }
     }
-
 }
 
 impl Default for Incrementars {
@@ -411,5 +465,19 @@ mod tests {
         });
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_map2_same_input_twice() {
+        // Regression: passing the same node as both inputs to map2 should not
+        // create duplicate edges or cause incorrect behaviour.
+        let mut dag = Incrementars::new();
+        let x = dag.var(3);
+        let squared = dag.map2(x.as_input(), x.as_input(), |a, b| a * b);
+        assert_eq!(squared.observe(), 9);
+
+        x.set(4);
+        dag.stabilize();
+        assert_eq!(squared.observe(), 16);
     }
 }

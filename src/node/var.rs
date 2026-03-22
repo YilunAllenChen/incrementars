@@ -37,7 +37,9 @@ impl<T> _Var<T> {
     }
 }
 
-/// A variable node. The entry point for feeding values into the graph.
+/// An input node holding a value of type `T`. Create with [`Incrementars::var`].
+///
+/// Cloning a `Var` produces a second handle to the same node (cheap reference-count bump).
 pub struct Var<T> {
     pub(crate) node: Rc<RefCell<_Var<T>>>,
 }
@@ -51,6 +53,8 @@ impl<T> Clone for Var<T> {
 }
 
 impl<T> Var<T> {
+    /// Updates the node's value and marks it dirty. The new value is not visible
+    /// to downstream nodes until the next [`Incrementars::stabilize`].
     pub fn set(&self, value: T) {
         let mut internal = self.node.deref().borrow_mut();
         internal.value = value;
@@ -80,6 +84,8 @@ impl<T: Clone> Observable<T> for Var<T> {
 }
 
 impl<T: Clone + 'static> Var<T> {
+    /// Returns a boxed clone of this handle, suitable for passing to
+    /// [`Incrementars::map`], [`Incrementars::map2`], or [`Incrementars::bind`].
     pub fn as_input(&self) -> Box<Var<T>> {
         Box::new(self.clone())
     }

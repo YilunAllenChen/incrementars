@@ -47,6 +47,29 @@ A **minimal, ergonomic** Rust library for incremental computation, inspired by J
 
 ---
 
+## Completed (continued)
+
+### Safety & correctness
+- **`nodes` switched to `HashMap<usize, ...>`** — was a `Vec` indexed by ID, which works only
+  while IDs are sequential and nodes are never removed. HashMap makes the invariant explicit and
+  safe against future refactors.
+- **Duplicate edges fixed** — `add_edge` now deduplicates before inserting into both
+  `dependencies` and `reverse_dependencies`. Prevents incorrect behaviour when the same node
+  is passed as both inputs to `map2`.
+- **Regression test added** — `test_map2_same_input_twice` covers the duplicate-edge case.
+
+### API
+- **`Node` trait made `pub(crate)`** — removed from the public prelude. Users have no reason
+  to implement or reference it; `Observable` is the right public abstraction.
+
+### Documentation
+- Doc comments on `Incrementars`, `var`, `map`, `map2`, `bind`, `stabilize`.
+- Doc comments on `Var`, `Map1`, `Map2`, `Bind1`, `Observable`, and their `as_input`/`set`
+  methods.
+- Working doc-test in `Incrementars` struct comment (verified by `cargo test`).
+
+---
+
 ## Remaining / future work
 
 ### Known issues

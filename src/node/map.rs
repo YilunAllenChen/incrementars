@@ -31,7 +31,9 @@ impl<I: 'static, O: PartialEq + 'static> Node for _Map1<I, O> {
     }
 }
 
-/// A node that maps a single input through a function.
+/// A node that maps one upstream value through a function. Create with [`Incrementars::map`].
+///
+/// Cloning a `Map1` produces a second handle to the same node.
 pub struct Map1<I, O> {
     pub(crate) node: Rc<RefCell<_Map1<I, O>>>,
 }
@@ -57,6 +59,8 @@ impl<I, O> Clone for Map1<I, O> {
 }
 
 impl<I, O: Clone + 'static> Map1<I, O> {
+    /// Returns a boxed clone of this handle, suitable for passing to
+    /// [`Incrementars::map`], [`Incrementars::map2`], or [`Incrementars::bind`].
     pub fn as_input(&self) -> Box<Map1<I, O>> {
         Box::new(self.clone())
     }
