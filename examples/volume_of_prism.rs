@@ -8,14 +8,14 @@ pub fn main() {
         x * x
     });
 
-    // on initial stabalization, area is calculated to be 4.
+    // on initial stabilization, area is calculated to be 4.
     assert_eq!(area.observe(), 4.0);
     length.set(3.0);
 
-    // right after setting, dag isn't stablized yet.
+    // right after setting, dag isn't stabilized yet.
     assert_eq!(area.observe(), 4.0);
 
-    dag.stablize();
+    dag.stabilize();
     assert_eq!(area.observe(), 9.0);
 
     println!("introducing height...");
@@ -29,11 +29,11 @@ pub fn main() {
 
     println!("setting height (this shouldn't trigger area calculation!)");
     height.set(10.0);
-    dag.stablize();
+    dag.stabilize();
     assert_eq!(volume.observe(), 90.0);
 
     println!("setting length (this should trigger area calculation)");
     length.set(2.0);
-    dag.stablize();
+    dag.stabilize();
     assert_eq!(volume.observe(), 40.0);
 }

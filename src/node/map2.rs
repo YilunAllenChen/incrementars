@@ -1,36 +1,40 @@
 use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{Node, Observable, StablizationCallback};
+use super::traits::{Node, Observable, StabilizationCallback};
 
-pub struct _Map2<I1, I2, O> {
-    pub id: usize,
-    pub depth: i32,
-    pub value: O,
-    pub input1: Box<dyn Observable<I1>>,
-    pub input2: Box<dyn Observable<I2>>,
-    pub f: fn(I1, I2) -> O,
+pub(crate) struct _Map2<I1, I2, O> {
+    pub(crate) id: usize,
+    pub(crate) depth: i32,
+    pub(crate) value: O,
+    pub(crate) input1: Box<dyn Observable<I1>>,
+    pub(crate) input2: Box<dyn Observable<I2>>,
+    pub(crate) f: Box<dyn Fn(I1, I2) -> O>,
 }
 
-impl<I1, I2, O> Node for _Map2<I1, I2, O> {
+impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O> {
     fn id(&self) -> usize {
         self.id
     }
-    fn stablize(&mut self) -> Vec<StablizationCallback> {
-        self.value = (self.f)(self.input1.observe(), self.input2.observe());
-        vec![StablizationCallback::ValueChanged]
+    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+        let new_value = (self.f)(self.input1.observe(), self.input2.observe());
+        if new_value == self.value {
+            return vec![];
+        }
+        self.value = new_value;
+        vec![StabilizationCallback::ValueChanged]
     }
     fn depth(&self) -> i32 {
         self.depth
     }
-
     fn adjust_depth(&mut self, new_depth: i32) {
         self.depth = new_depth;
     }
 }
 
+/// A node that maps two inputs through a function.
 pub struct Map2<I1, I2, O> {
-    pub node: Rc<RefCell<_Map2<I1, I2, O>>>,
+    pub(crate) node: Rc<RefCell<_Map2<I1, I2, O>>>,
 }
 
 impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
@@ -38,8 +42,7 @@ impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
         self.node.deref().borrow().id
     }
     fn observe(&self) -> O {
-        let borrowed = self.node.deref().borrow();
-        borrowed.value.clone()
+        self.node.deref().borrow().value.clone()
     }
     fn depth(&self) -> i32 {
         self.node.deref().borrow().depth
@@ -54,7 +57,7 @@ impl<I1, I2, O> Clone for Map2<I1, I2, O> {
     }
 }
 
-impl<I1, I2, O> Map2<I1, I2, O> {
+impl<I1, I2, O: Clone + 'static> Map2<I1, I2, O> {
     pub fn as_input(&self) -> Box<Map2<I1, I2, O>> {
         Box::new(self.clone())
     }

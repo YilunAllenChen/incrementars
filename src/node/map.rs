@@ -1,24 +1,27 @@
 use std::ops::Deref;
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{Node, Observable, StablizationCallback};
+use super::traits::{Node, Observable, StabilizationCallback};
 
-pub struct _Map1<I, O> {
-    pub id: usize,
-    pub depth: i32,
-    pub value: O,
-    pub input: Box<dyn Observable<I>>,
-    pub f: fn(I) -> O,
+pub(crate) struct _Map1<I, O> {
+    pub(crate) id: usize,
+    pub(crate) depth: i32,
+    pub(crate) value: O,
+    pub(crate) input: Box<dyn Observable<I>>,
+    pub(crate) f: Box<dyn Fn(I) -> O>,
 }
 
-impl<I, O> Node for _Map1<I, O> {
+impl<I: 'static, O: PartialEq + 'static> Node for _Map1<I, O> {
     fn id(&self) -> usize {
         self.id
     }
-
-    fn stablize(&mut self) -> Vec<StablizationCallback> {
-        self.value = (self.f)(self.input.observe());
-        vec![StablizationCallback::ValueChanged]
+    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+        let new_value = (self.f)(self.input.observe());
+        if new_value == self.value {
+            return vec![];
+        }
+        self.value = new_value;
+        vec![StabilizationCallback::ValueChanged]
     }
     fn depth(&self) -> i32 {
         self.depth
@@ -28,8 +31,9 @@ impl<I, O> Node for _Map1<I, O> {
     }
 }
 
+/// A node that maps a single input through a function.
 pub struct Map1<I, O> {
-    pub node: Rc<RefCell<_Map1<I, O>>>,
+    pub(crate) node: Rc<RefCell<_Map1<I, O>>>,
 }
 
 impl<I, O: Clone> Observable<O> for Map1<I, O> {
@@ -37,8 +41,7 @@ impl<I, O: Clone> Observable<O> for Map1<I, O> {
         self.node.deref().borrow().id
     }
     fn observe(&self) -> O {
-        let borrowed = self.node.deref().borrow();
-        borrowed.value.clone()
+        self.node.deref().borrow().value.clone()
     }
     fn depth(&self) -> i32 {
         self.node.deref().borrow().depth
@@ -53,7 +56,7 @@ impl<I, O> Clone for Map1<I, O> {
     }
 }
 
-impl<I, O> Map1<I, O> {
+impl<I, O: Clone + 'static> Map1<I, O> {
     pub fn as_input(&self) -> Box<Map1<I, O>> {
         Box::new(self.clone())
     }

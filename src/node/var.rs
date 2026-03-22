@@ -1,14 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
-use super::traits::{MaybeDirty, Node, Observable, StablizationCallback};
+use super::traits::{MaybeDirty, Node, Observable, StabilizationCallback};
 use std::ops::Deref;
 
-/// Internal representation of a Var node.
-pub struct _Var<T> {
-    id: usize,
-    depth: i32,
-    value: T,
-    dirty: bool,
+pub(crate) struct _Var<T> {
+    pub(crate) id: usize,
+    pub(crate) depth: i32,
+    pub(crate) value: T,
+    pub(crate) dirty: bool,
 }
 
 impl<T> Node for _Var<T> {
@@ -18,12 +17,12 @@ impl<T> Node for _Var<T> {
     fn depth(&self) -> i32 {
         self.depth
     }
-    fn stablize(&mut self) -> Vec<StablizationCallback> {
+    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
         self.dirty = false;
-        vec![StablizationCallback::ValueChanged]
+        vec![StabilizationCallback::ValueChanged]
     }
     fn adjust_depth(&mut self, _: i32) {
-        panic!("Var height should not change");
+        panic!("Var depth should not change");
     }
 }
 
@@ -37,9 +36,10 @@ impl<T> _Var<T> {
         }
     }
 }
-/// A variable node.
+
+/// A variable node. The entry point for feeding values into the graph.
 pub struct Var<T> {
-    pub node: Rc<RefCell<_Var<T>>>,
+    pub(crate) node: Rc<RefCell<_Var<T>>>,
 }
 
 impl<T> Clone for Var<T> {
@@ -72,15 +72,14 @@ impl<T: Clone> Observable<T> for Var<T> {
         self.node.deref().borrow().id
     }
     fn observe(&self) -> T {
-        let borrowed = self.node.deref().borrow();
-        borrowed.value.clone()
+        self.node.deref().borrow().value.clone()
     }
     fn depth(&self) -> i32 {
         self.node.deref().borrow().depth
     }
 }
 
-impl<T> Var<T> {
+impl<T: Clone + 'static> Var<T> {
     pub fn as_input(&self) -> Box<Var<T>> {
         Box::new(self.clone())
     }

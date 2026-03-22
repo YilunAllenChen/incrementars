@@ -1,11 +1,11 @@
-pub enum StablizationCallback {
+pub enum StabilizationCallback {
     ValueChanged,
     DependenciesUpdated { from: Vec<usize>, to: Vec<usize> },
 }
 
 pub trait Node {
     fn id(&self) -> usize;
-    fn stablize(&mut self) -> Vec<StablizationCallback>;
+    fn stabilize(&mut self) -> Vec<StabilizationCallback>;
     fn depth(&self) -> i32;
     fn adjust_depth(&mut self, new_depth: i32);
 }
