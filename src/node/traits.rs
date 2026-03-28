@@ -10,16 +10,21 @@ pub(crate) trait Node {
     fn stabilize(&mut self) -> Vec<StabilizationCallback>;
     fn depth(&self) -> i32;
     fn adjust_depth(&mut self, new_depth: i32);
+    fn teardown(&mut self) {}
 }
 
 /// A node whose current value can be read.
 ///
 /// Implemented by [`Var`](crate::node::Var), [`Map1`](crate::node::Map1),
-/// [`Map2`](crate::node::Map2), and [`Bind1`](crate::node::Bind1).
+/// [`Map2`](crate::node::Map2), [`Map3`](crate::node::Map3),
+/// [`MapN`](crate::node::MapN), and
+/// [`Bind1`](crate::node::Bind1).
 ///
-/// Pass a `Box<dyn Observable<T>>` (obtained via `.as_input()`) to
+/// Pass a boxed node handle or any value implementing [`IntoInput`] to
 /// [`Incrementars::map`](crate::node::Incrementars::map),
-/// [`Incrementars::map2`](crate::node::Incrementars::map2), or
+/// [`Incrementars::map2`](crate::node::Incrementars::map2),
+/// [`Incrementars::map3`](crate::node::Incrementars::map3),
+/// [`Incrementars::mapn`](crate::node::Incrementars::mapn), or
 /// [`Incrementars::bind`](crate::node::Incrementars::bind) to wire nodes together.
 pub trait Observable<T> {
     fn id(&self) -> usize;
@@ -28,6 +33,17 @@ pub trait Observable<T> {
     /// to propagate any pending changes.
     fn observe(&self) -> T;
     fn depth(&self) -> i32;
+}
+
+/// Converts a node handle into an input accepted by graph-construction APIs.
+pub trait IntoInput<T> {
+    fn into_input(self) -> Box<dyn Observable<T>>;
+}
+
+impl<T> IntoInput<T> for Box<dyn Observable<T>> {
+    fn into_input(self) -> Box<dyn Observable<T>> {
+        self
+    }
 }
 
 impl<T> PartialEq for dyn Observable<T> {

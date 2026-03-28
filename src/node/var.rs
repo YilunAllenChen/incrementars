@@ -1,6 +1,9 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    rc::Rc,
+};
 
-use super::traits::{MaybeDirty, Node, Observable, StabilizationCallback};
+use super::traits::{IntoInput, MaybeDirty, Node, Observable, StabilizationCallback};
 use std::ops::Deref;
 
 pub(crate) struct _Var<T> {
@@ -60,6 +63,11 @@ impl<T> Var<T> {
         internal.value = value;
         internal.dirty = true;
     }
+
+    /// Borrows the node's current value without cloning it.
+    pub fn observe_ref(&self) -> Ref<'_, T> {
+        Ref::map(self.node.deref().borrow(), |internal| &internal.value)
+    }
 }
 
 impl<T> MaybeDirty for Var<T> {
@@ -85,8 +93,21 @@ impl<T: Clone> Observable<T> for Var<T> {
 
 impl<T: Clone + 'static> Var<T> {
     /// Returns a boxed clone of this handle, suitable for passing to
-    /// [`Incrementars::map`], [`Incrementars::map2`], or [`Incrementars::bind`].
+    /// [`Incrementars::map`], [`Incrementars::map2`], [`Incrementars::map3`],
+    /// [`Incrementars::mapn`], or [`Incrementars::bind`].
     pub fn as_input(&self) -> Box<Var<T>> {
         Box::new(self.clone())
+    }
+}
+
+impl<T: Clone + 'static> IntoInput<T> for Var<T> {
+    fn into_input(self) -> Box<dyn Observable<T>> {
+        Box::new(self)
+    }
+}
+
+impl<T: Clone + 'static> IntoInput<T> for Box<Var<T>> {
+    fn into_input(self) -> Box<dyn Observable<T>> {
+        self
     }
 }

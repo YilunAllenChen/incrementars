@@ -1,15 +1,18 @@
 use std::ops::Deref;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    rc::Rc,
+};
 
-use super::traits::{Node, Observable, StabilizationCallback};
+use super::traits::{IntoInput, Node, Observable, StabilizationCallback};
 
 pub(crate) struct _Map2<I1, I2, O> {
     pub(crate) id: usize,
     pub(crate) depth: i32,
     pub(crate) value: O,
-    pub(crate) input1: Box<dyn Observable<I1>>,
-    pub(crate) input2: Box<dyn Observable<I2>>,
-    pub(crate) f: Box<dyn Fn(I1, I2) -> O>,
+    pub(crate) input1: Option<Box<dyn Observable<I1>>>,
+    pub(crate) input2: Option<Box<dyn Observable<I2>>>,
+    pub(crate) f: Option<Box<dyn Fn(I1, I2) -> O>>,
 }
 
 impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O> {
@@ -17,7 +20,10 @@ impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O>
         self.id
     }
     fn stabilize(&mut self) -> Vec<StabilizationCallback> {
-        let new_value = (self.f)(self.input1.observe(), self.input2.observe());
+        let input1 = self.input1.as_ref().expect("Map2 detached from graph");
+        let input2 = self.input2.as_ref().expect("Map2 detached from graph");
+        let f = self.f.as_ref().expect("Map2 detached from graph");
+        let new_value = f(input1.observe(), input2.observe());
         if new_value == self.value {
             return vec![];
         }
@@ -29,6 +35,11 @@ impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O>
     }
     fn adjust_depth(&mut self, new_depth: i32) {
         self.depth = new_depth;
+    }
+    fn teardown(&mut self) {
+        self.input1 = None;
+        self.input2 = None;
+        self.f = None;
     }
 }
 
@@ -61,8 +72,28 @@ impl<I1, I2, O> Clone for Map2<I1, I2, O> {
 
 impl<I1, I2, O: Clone + 'static> Map2<I1, I2, O> {
     /// Returns a boxed clone of this handle, suitable for passing to
-    /// [`Incrementars::map`], [`Incrementars::map2`], or [`Incrementars::bind`].
+    /// [`Incrementars::map`], [`Incrementars::map2`], [`Incrementars::map3`],
+    /// [`Incrementars::mapn`], or [`Incrementars::bind`].
     pub fn as_input(&self) -> Box<Map2<I1, I2, O>> {
         Box::new(self.clone())
+    }
+}
+
+impl<I1, I2, O> Map2<I1, I2, O> {
+    /// Borrows the node's current value without cloning it.
+    pub fn observe_ref(&self) -> Ref<'_, O> {
+        Ref::map(self.node.deref().borrow(), |internal| &internal.value)
+    }
+}
+
+impl<I1: 'static, I2: 'static, O: Clone + 'static> IntoInput<O> for Map2<I1, I2, O> {
+    fn into_input(self) -> Box<dyn Observable<O>> {
+        Box::new(self)
+    }
+}
+
+impl<I1: 'static, I2: 'static, O: Clone + 'static> IntoInput<O> for Box<Map2<I1, I2, O>> {
+    fn into_input(self) -> Box<dyn Observable<O>> {
+        self
     }
 }
