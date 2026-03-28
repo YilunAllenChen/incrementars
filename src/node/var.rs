@@ -3,9 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use super::traits::{
-    Incr, IntoInput, MaybeDirty, Node, NodeState, Observable, StabilizationCallback,
-};
+use super::traits::{Incr, IntoInput, Node, NodeState, Observable, StabilizationResult};
 
 pub(crate) struct _Var<T> {
     pub(crate) state: Rc<RefCell<NodeState<T>>>,
@@ -13,17 +11,13 @@ pub(crate) struct _Var<T> {
 }
 
 impl<T> Node for _Var<T> {
-    fn id(&self) -> usize {
-        self.state.borrow().id
-    }
-
     fn depth(&self) -> i32 {
         self.state.borrow().depth
     }
 
-    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+    fn stabilize(&mut self) -> StabilizationResult {
         self.dirty.set(false);
-        vec![StabilizationCallback::ValueChanged]
+        StabilizationResult::Changed
     }
 
     fn adjust_depth(&mut self, _: i32) {
@@ -65,16 +59,6 @@ impl<T> Var<T> {
     /// Borrows the node's current value without cloning it.
     pub fn observe_ref(&self) -> Ref<'_, T> {
         Ref::map(self.state.borrow(), |state| &state.value)
-    }
-}
-
-impl<T> MaybeDirty for Var<T> {
-    fn id(&self) -> usize {
-        self.state.borrow().id
-    }
-
-    fn is_dirty(&self) -> bool {
-        self.dirty.get()
     }
 }
 

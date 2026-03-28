@@ -3,16 +3,20 @@ use std::{
     rc::Rc,
 };
 
-pub enum StabilizationCallback {
-    ValueChanged,
-    DependenciesUpdated { from: Vec<usize>, to: Vec<usize> },
+pub enum StabilizationResult {
+    Unchanged,
+    Changed,
+    Rebound {
+        from: usize,
+        to: usize,
+        value_changed: bool,
+    },
 }
 
 /// Internal trait implemented by all node types. Not part of the public API;
 /// use [`Observable`] and [`Incr`] to read node values and wire nodes together.
 pub(crate) trait Node {
-    fn id(&self) -> usize;
-    fn stabilize(&mut self) -> Vec<StabilizationCallback>;
+    fn stabilize(&mut self) -> StabilizationResult;
     fn depth(&self) -> i32;
     fn adjust_depth(&mut self, new_depth: i32);
     fn teardown(&mut self) {}
@@ -112,9 +116,4 @@ impl<T> IntoInput<T> for &Incr<T> {
     fn into_input(self) -> Incr<T> {
         self.clone()
     }
-}
-
-pub(crate) trait MaybeDirty {
-    fn id(&self) -> usize;
-    fn is_dirty(&self) -> bool;
 }

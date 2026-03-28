@@ -1,6 +1,6 @@
 use std::{cell::Ref, marker::PhantomData};
 
-use super::traits::{Incr, IntoInput, Node, Observable, StabilizationCallback};
+use super::traits::{Incr, IntoInput, Node, Observable, StabilizationResult};
 
 pub(crate) struct _MapN<T, O> {
     pub(crate) output: Incr<O>,
@@ -9,20 +9,16 @@ pub(crate) struct _MapN<T, O> {
 }
 
 impl<T: Clone + 'static, O: PartialEq + 'static> Node for _MapN<T, O> {
-    fn id(&self) -> usize {
-        self.output.id()
-    }
-
-    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+    fn stabilize(&mut self) -> StabilizationResult {
         let inputs = self.inputs.as_ref().expect("MapN detached from graph");
         let f = self.f.as_ref().expect("MapN detached from graph");
         let new_value = f(inputs.iter().map(|input| input.observe()).collect());
         let mut output = self.output.state.borrow_mut();
         if new_value == output.value {
-            return vec![];
+            return StabilizationResult::Unchanged;
         }
         output.value = new_value;
-        vec![StabilizationCallback::ValueChanged]
+        StabilizationResult::Changed
     }
 
     fn depth(&self) -> i32 {

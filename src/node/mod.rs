@@ -1,14 +1,12 @@
 use std::cmp::min;
 use std::collections::BinaryHeap;
-use std::ops::Deref;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
-use self::traits::MaybeDirty;
 use bitmap::Bitmap;
-use traits::StabilizationCallback;
+use traits::StabilizationResult;
 
 mod bind;
 mod bitmap;
@@ -33,6 +31,11 @@ pub use self::{
 // per level, are always processed after their inputs in the stabilization queue.
 const VAR_DEPTH: i32 = 1_000;
 
+struct InputNode {
+    id: usize,
+    dirty: Rc<Cell<bool>>,
+}
+
 /// The incremental computation graph.
 ///
 /// Create input nodes with [`var`](Incrementars::var), wire them together with
@@ -55,10 +58,10 @@ const VAR_DEPTH: i32 = 1_000;
 pub struct Incrementars {
     // node id → node handle. IDs are assigned sequentially from 0 by next_id(),
     // and remain stable even after removal.
-    nodes: Vec<Option<Rc<RefCell<dyn traits::Node>>>>,
+    nodes: Vec<Option<Box<dyn traits::Node>>>,
     id_counter: usize,
 
-    inputs: Vec<Box<dyn MaybeDirty>>,
+    inputs: Vec<InputNode>,
     // parent_id → [child_ids]: which nodes depend on a given node
     pub(crate) dependencies: Vec<Vec<usize>>,
     // child_id → [parent_ids]: which nodes a given node depends on
@@ -91,11 +94,16 @@ impl Incrementars {
         id
     }
 
-    fn node(&self, id: usize) -> Rc<RefCell<dyn traits::Node>> {
+    fn node(&self, id: usize) -> &dyn traits::Node {
         self.nodes[id]
-            .as_ref()
+            .as_deref()
             .expect("node id missing from graph")
-            .clone()
+    }
+
+    fn node_mut(&mut self, id: usize) -> &mut dyn traits::Node {
+        self.nodes[id]
+            .as_deref_mut()
+            .expect("node id missing from graph")
     }
 
     /// Adds a directed edge parent → child to both dependency maps.
@@ -119,12 +127,11 @@ impl Incrementars {
         let id = self.next_id();
         let state = Rc::new(RefCell::new(traits::NodeState::new(id, VAR_DEPTH, value)));
         let dirty = Rc::new(Cell::new(false));
-        let node = Rc::new(RefCell::new(var::_Var::new(state.clone(), dirty.clone())));
-        self.nodes[id] = Some(node.clone());
-        self.inputs.push(Box::new(Var {
-            state: state.clone(),
+        self.nodes[id] = Some(Box::new(var::_Var::new(state.clone(), dirty.clone())));
+        self.inputs.push(InputNode {
+            id,
             dirty: dirty.clone(),
-        }));
+        });
         Var { state, dirty }
     }
 
@@ -144,12 +151,12 @@ impl Incrementars {
         let input_id = input.id();
         self.add_edge(input_id, id);
         let output = Incr::new(id, input.depth() - 1, f(input.observe()));
-        let node = Rc::new(RefCell::new(map::_Map1 {
+        let node = Box::new(map::_Map1 {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
-        }));
-        self.nodes[id] = Some(node.clone());
+        });
+        self.nodes[id] = Some(node);
         Map1 {
             inner: output,
             marker: std::marker::PhantomData,
@@ -179,13 +186,13 @@ impl Incrementars {
             min(input1.depth(), input2.depth()) - 1,
             f(input1.observe(), input2.observe()),
         );
-        let node = Rc::new(RefCell::new(map2::_Map2 {
+        let node = Box::new(map2::_Map2 {
             output: output.clone(),
             input1: Some(input1),
             input2: Some(input2),
             f: Some(Box::new(f)),
-        }));
-        self.nodes[id] = Some(node.clone());
+        });
+        self.nodes[id] = Some(node);
         Map2 {
             inner: output,
             marker: std::marker::PhantomData,
@@ -223,14 +230,14 @@ impl Incrementars {
             min(min(input1.depth(), input2.depth()), input3.depth()) - 1,
             f(input1.observe(), input2.observe(), input3.observe()),
         );
-        let node = Rc::new(RefCell::new(map3::_Map3 {
+        let node = Box::new(map3::_Map3 {
             output: output.clone(),
             input1: Some(input1),
             input2: Some(input2),
             input3: Some(input3),
             f: Some(Box::new(f)),
-        }));
-        self.nodes[id] = Some(node.clone());
+        });
+        self.nodes[id] = Some(node);
         Map3 {
             inner: output,
             marker: std::marker::PhantomData,
@@ -270,12 +277,12 @@ impl Incrementars {
             depth,
             f(inputs.iter().map(|input| input.observe()).collect()),
         );
-        let node = Rc::new(RefCell::new(mapn::_MapN {
+        let node = Box::new(mapn::_MapN {
             output: output.clone(),
             inputs: Some(inputs),
             f: Some(Box::new(f)),
-        }));
-        self.nodes[id] = Some(node.clone());
+        });
+        self.nodes[id] = Some(node);
         MapN {
             inner: output,
             marker: std::marker::PhantomData,
@@ -301,15 +308,15 @@ impl Incrementars {
         let value_id = value.id();
         let depth = min(input.depth(), value.depth()) - 1;
         let output = Incr::new(id, depth, value.observe());
-        let node = Rc::new(RefCell::new(bind::_Bind1 {
+        let node = Box::new(bind::_Bind1 {
             output: output.clone(),
             value: Some(value),
             input: Some(input),
             f: Some(Box::new(f)),
-        }));
+        });
         self.add_edge(input_id, id);
         self.add_edge(value_id, id);
-        self.nodes[id] = Some(node.clone());
+        self.nodes[id] = Some(node);
         Bind1 {
             inner: output,
             marker: std::marker::PhantomData,
@@ -382,7 +389,7 @@ impl Incrementars {
             }
         }
 
-        self.inputs.retain(|input| !to_remove.contains(&input.id()));
+        self.inputs.retain(|input| !to_remove.contains(&input.id));
 
         for node_id in &removal_order {
             self.hooks[*node_id].clear();
@@ -396,7 +403,8 @@ impl Incrementars {
 
         for node_id in removal_order {
             if let Some(node) = self.nodes[node_id].take() {
-                node.borrow_mut().teardown();
+                let mut node = node;
+                node.teardown();
             }
         }
 
@@ -413,12 +421,11 @@ impl Incrementars {
         let mut queue = self
             .inputs
             .iter()
-            .filter(|x| x.is_dirty())
-            .map(|x| x.id())
+            .filter(|input| input.dirty.get())
+            .map(|input| input.id)
             .map(|id| {
                 let node = self.node(id);
-                let node = node.deref().borrow();
-                (node.depth(), node.id())
+                (node.depth(), id)
             })
             .collect::<BinaryHeap<(i32, usize)>>();
 
@@ -427,56 +434,62 @@ impl Incrementars {
         let mut changed_nodes = vec![];
 
         while let Some((_depth, head_id)) = queue.pop() {
-            let head = self.node(head_id);
-            let callbacks = head.deref().borrow_mut().stabilize();
+            let callbacks = {
+                let head = self.node_mut(head_id);
+                head.stabilize()
+            };
 
-            for cb in callbacks {
-                match cb {
-                    StabilizationCallback::ValueChanged => {
-                        if !changed.contains(&head_id) {
-                            changed.insert(head_id);
-                            changed_nodes.push(head_id);
+            match callbacks {
+                StabilizationResult::Unchanged => {}
+                StabilizationResult::Changed => {
+                    if !changed.contains(&head_id) {
+                        changed.insert(head_id);
+                        changed_nodes.push(head_id);
+                    }
+                    for &child_id in &self.dependencies[head_id] {
+                        if !visited.contains(&child_id) {
+                            visited.insert(child_id);
+                            let depth = self.node(child_id).depth();
+                            queue.push((depth, child_id));
                         }
-                        for &child_id in &self.dependencies[head_id] {
-                            if !visited.contains(&child_id) {
-                                visited.insert(child_id);
-                                let child = self.node(child_id);
-                                let depth = child.deref().borrow().depth();
-                                queue.push((depth, child_id));
+                    }
+                }
+                StabilizationResult::Rebound {
+                    from,
+                    to,
+                    value_changed,
+                } => {
+                    self.dependencies[from].retain(|&x| x != head_id);
+                    self.reverse_dependencies[head_id].retain(|&x| x != from);
+                    self.add_edge(to, head_id);
+
+                    let mut adjust_queue = vec![head_id];
+                    while let Some(node_id) = adjust_queue.pop() {
+                        let min_parent_depth = self.reverse_dependencies[node_id]
+                            .iter()
+                            .filter_map(|&pid| self.nodes[pid].as_ref().map(|node| node.depth()))
+                            .min();
+
+                        if let Some(parent_depth) = min_parent_depth {
+                            let new_depth = parent_depth - 1;
+                            let old_depth = self.node(node_id).depth();
+                            if new_depth != old_depth {
+                                self.node_mut(node_id).adjust_depth(new_depth);
+                                adjust_queue.extend(self.dependencies[node_id].iter().copied());
                             }
                         }
                     }
-                    StabilizationCallback::DependenciesUpdated { from, to } => {
-                        // Remove old dependency edges
-                        for from_id in &from {
-                            self.dependencies[*from_id].retain(|&x| x != head_id);
-                            self.reverse_dependencies[head_id].retain(|&x| x != *from_id);
-                        }
-                        // Add new dependency edges
-                        for &to_id in &to {
-                            self.add_edge(to_id, head_id);
-                        }
 
-                        // Adjust depths for head_id and all its descendants.
-                        // Runs both up and down since the new target may be at a
-                        // different depth than the old one.
-                        let mut adjust_queue = vec![head_id];
-                        while let Some(node_id) = adjust_queue.pop() {
-                            let min_parent_depth = self.reverse_dependencies[node_id]
-                                .iter()
-                                .filter_map(|&pid| {
-                                    self.nodes[pid].as_ref().map(|node| node.borrow().depth())
-                                })
-                                .min();
-
-                            if let Some(parent_depth) = min_parent_depth {
-                                let new_depth = parent_depth - 1;
-                                let node = self.node(node_id);
-                                let old_depth = node.borrow().depth();
-                                if new_depth != old_depth {
-                                    node.borrow_mut().adjust_depth(new_depth);
-                                    adjust_queue.extend(self.dependencies[node_id].iter().copied());
-                                }
+                    if value_changed && !changed.contains(&head_id) {
+                        changed.insert(head_id);
+                        changed_nodes.push(head_id);
+                    }
+                    if value_changed {
+                        for &child_id in &self.dependencies[head_id] {
+                            if !visited.contains(&child_id) {
+                                visited.insert(child_id);
+                                let depth = self.node(child_id).depth();
+                                queue.push((depth, child_id));
                             }
                         }
                     }
@@ -501,7 +514,7 @@ impl Default for Incrementars {
 impl Drop for Incrementars {
     fn drop(&mut self) {
         for node in self.nodes.iter_mut().filter_map(Option::as_mut) {
-            node.borrow_mut().teardown();
+            node.teardown();
         }
     }
 }

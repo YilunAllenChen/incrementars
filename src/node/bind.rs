@@ -1,6 +1,6 @@
 use std::{cell::Ref, marker::PhantomData};
 
-use super::traits::{Incr, IntoInput, Node, Observable, StabilizationCallback};
+use super::traits::{Incr, IntoInput, Node, Observable, StabilizationResult};
 
 pub(crate) struct _Bind1<I, O> {
     pub(crate) output: Incr<O>,
@@ -10,11 +10,7 @@ pub(crate) struct _Bind1<I, O> {
 }
 
 impl<I: Clone + 'static, O: Clone + PartialEq + 'static> Node for _Bind1<I, O> {
-    fn id(&self) -> usize {
-        self.output.id()
-    }
-
-    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+    fn stabilize(&mut self) -> StabilizationResult {
         let input = self.input.as_ref().expect("Bind1 detached from graph");
         let f = self.f.as_ref().expect("Bind1 detached from graph");
         let new_value = f(input.observe());
@@ -27,17 +23,18 @@ impl<I: Clone + 'static, O: Clone + PartialEq + 'static> Node for _Bind1<I, O> {
         self.output.state.borrow_mut().value = new_current;
         self.value = Some(new_value.clone());
 
-        let mut callbacks = Vec::new();
         if !same_node {
-            callbacks.push(StabilizationCallback::DependenciesUpdated {
-                from: vec![old_id],
-                to: vec![new_value.id()],
-            });
+            return StabilizationResult::Rebound {
+                from: old_id,
+                to: new_value.id(),
+                value_changed,
+            };
         }
         if value_changed {
-            callbacks.push(StabilizationCallback::ValueChanged);
+            StabilizationResult::Changed
+        } else {
+            StabilizationResult::Unchanged
         }
-        callbacks
     }
 
     fn depth(&self) -> i32 {

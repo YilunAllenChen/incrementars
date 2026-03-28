@@ -1,6 +1,6 @@
 use std::{cell::Ref, marker::PhantomData};
 
-use super::traits::{Incr, IntoInput, Node, Observable, StabilizationCallback};
+use super::traits::{Incr, IntoInput, Node, Observable, StabilizationResult};
 
 pub(crate) struct _Map3<I1, I2, I3, O> {
     pub(crate) output: Incr<O>,
@@ -13,11 +13,7 @@ pub(crate) struct _Map3<I1, I2, I3, O> {
 impl<I1: Clone + 'static, I2: Clone + 'static, I3: Clone + 'static, O: PartialEq + 'static> Node
     for _Map3<I1, I2, I3, O>
 {
-    fn id(&self) -> usize {
-        self.output.id()
-    }
-
-    fn stabilize(&mut self) -> Vec<StabilizationCallback> {
+    fn stabilize(&mut self) -> StabilizationResult {
         let input1 = self.input1.as_ref().expect("Map3 detached from graph");
         let input2 = self.input2.as_ref().expect("Map3 detached from graph");
         let input3 = self.input3.as_ref().expect("Map3 detached from graph");
@@ -25,10 +21,10 @@ impl<I1: Clone + 'static, I2: Clone + 'static, I3: Clone + 'static, O: PartialEq
         let new_value = f(input1.observe(), input2.observe(), input3.observe());
         let mut output = self.output.state.borrow_mut();
         if new_value == output.value {
-            return vec![];
+            return StabilizationResult::Unchanged;
         }
         output.value = new_value;
-        vec![StabilizationCallback::ValueChanged]
+        StabilizationResult::Changed
     }
 
     fn depth(&self) -> i32 {
