@@ -38,7 +38,7 @@ use incrementars::prelude::{Incrementars, Observable};
 pub fn main() {
     let mut dag = Incrementars::new();
     let length = dag.var(2.0);
-    let area = dag.map(length.clone(), |x| {
+    let area = dag.map(&length, |x| {
         println!("calculating area");
         x * x
     });
@@ -55,7 +55,7 @@ pub fn main() {
 
     println!("introducing height...");
     let height = dag.var(5.0);
-    let volume = dag.map2(area.clone(), height.clone(), |x, y| {
+    let volume = dag.map2(&area, &height, |x, y| {
         println!("calculating volume");
         x * y
     });
@@ -74,15 +74,15 @@ pub fn main() {
 }
 ```
 
-The graph APIs accept direct node handles, so the common case is just cloning the
-handle you already have:
+The graph APIs accept direct handles and references, so the common case is just
+passing `&node`:
 
 ```rust
 use incrementars::prelude::{Incrementars, Observable};
 
 let mut dag = Incrementars::new();
 let x = dag.var(2);
-let y = dag.map(x.clone(), |value| value + 1);
+let y = dag.map(&x, |value| value + 1);
 assert_eq!(y.observe(), 3);
 ```
 

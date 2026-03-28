@@ -29,9 +29,9 @@ fn linear() -> Metrics {
     let count = LINEAR_COUNT;
     let mut dag = Incrementars::new();
     let var = dag.var(0);
-    let mut map: Map1<i32, i32> = dag.map(var.as_input(), |x| x + 1);
+    let mut map: Map1<i32, i32> = dag.map(&var, |x| x + 1);
     for _ in 0..count {
-        map = dag.map(map.as_input(), |x| x + 1);
+        map = dag.map(&map, |x| x + 1);
     }
     let start = std::time::Instant::now();
     var.set(10);
@@ -50,14 +50,14 @@ fn expand() -> Metrics {
     let mut count = 0;
     let mut dag = Incrementars::new();
     let var = dag.var(0);
-    let map0 = dag.map(var.as_input(), |x| x + 1);
-    let mut queue: Vec<Box<Map1<i32, i32>>> = vec![map0.as_input()];
+    let map0 = dag.map(&var, |x| x + 1);
+    let mut queue: Vec<Map1<i32, i32>> = vec![map0];
     for _ in 0..layers / 2 {
         let head = queue.pop().unwrap();
         let out1 = dag.map(head.clone(), |x| x + 1);
-        let out2 = dag.map(head, |x| x + 2);
-        queue.push(out1.as_input());
-        queue.push(out2.as_input());
+        let out2 = dag.map(&head, |x| x + 2);
+        queue.push(out1);
+        queue.push(out2);
         count += 2;
     }
     let start = std::time::Instant::now();
@@ -81,7 +81,7 @@ fn join() -> Metrics {
     let mut queue = vars
         .chunks(2)
         .filter_map(|chunk| match chunk {
-            [a, b] => Some(dag.map2(a.as_input(), b.as_input(), |x, y| x + y)),
+            [a, b] => Some(dag.map2(a, b, |x, y| x + y)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -91,7 +91,7 @@ fn join() -> Metrics {
     while queue.len() > 2 {
         let in1 = queue.pop().unwrap();
         if let Some(in2) = queue.pop() {
-            queue.push(dag.map2(in1.as_input(), in2.as_input(), |x, y| x + y));
+            queue.push(dag.map2(&in1, &in2, |x, y| x + y));
             count += 2;
         }
     }
@@ -116,14 +116,14 @@ fn iter() -> Metrics {
     let mut count = 0;
     let mut dag = Incrementars::new();
     let var = dag.var(0);
-    let map0 = dag.map(var.as_input(), |x| x);
-    let mut queue: Vec<Box<Map1<i32, i32>>> = vec![map0.as_input()];
+    let map0 = dag.map(&var, |x| x);
+    let mut queue: Vec<Map1<i32, i32>> = vec![map0];
     for _ in 0..layers / 2 {
         let head = queue.pop().unwrap();
         let out1 = dag.map(head.clone(), |x| x);
-        let out2 = dag.map(head, |x| x);
-        queue.push(out1.as_input());
-        queue.push(out2.as_input());
+        let out2 = dag.map(&head, |x| x);
+        queue.push(out1);
+        queue.push(out2);
         count += 2;
     }
     let start = std::time::Instant::now();

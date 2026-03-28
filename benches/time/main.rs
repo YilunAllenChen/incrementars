@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use incrementars::prelude::{Incrementars, Map1, Observable, Var};
+use incrementars::prelude::{Incrementars, Map1, Var};
 use std::time::Duration;
 
 fn build_linear(count: usize) -> (Incrementars, Var<i32>) {
@@ -24,13 +24,7 @@ fn build_fanout(branches: usize) -> (Incrementars, Var<i32>) {
 fn build_join(width: usize) -> (Incrementars, Vec<Var<i32>>) {
     let mut dag = Incrementars::new();
     let vars = (0..width as i32).map(|i| dag.var(i)).collect::<Vec<_>>();
-    dag.mapn(
-        vars.iter()
-            .cloned()
-            .map(|var| Box::new(var) as Box<dyn Observable<i32>>)
-            .collect(),
-        |values| values.into_iter().sum::<i32>(),
-    );
+    dag.mapn(vars.iter(), |values| values.into_iter().sum::<i32>());
     (dag, vars)
 }
 

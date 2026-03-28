@@ -1,41 +1,40 @@
-use std::ops::Deref;
-use std::{
-    cell::{Ref, RefCell},
-    rc::Rc,
-};
+use std::{cell::Ref, marker::PhantomData};
 
-use super::traits::{IntoInput, Node, Observable, StabilizationCallback};
+use super::traits::{Incr, IntoInput, Node, Observable, StabilizationCallback};
 
 pub(crate) struct _Map2<I1, I2, O> {
-    pub(crate) id: usize,
-    pub(crate) depth: i32,
-    pub(crate) value: O,
-    pub(crate) input1: Option<Box<dyn Observable<I1>>>,
-    pub(crate) input2: Option<Box<dyn Observable<I2>>>,
+    pub(crate) output: Incr<O>,
+    pub(crate) input1: Option<Incr<I1>>,
+    pub(crate) input2: Option<Incr<I2>>,
     pub(crate) f: Option<Box<dyn Fn(I1, I2) -> O>>,
 }
 
-impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O> {
+impl<I1: Clone + 'static, I2: Clone + 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O> {
     fn id(&self) -> usize {
-        self.id
+        self.output.id()
     }
+
     fn stabilize(&mut self) -> Vec<StabilizationCallback> {
         let input1 = self.input1.as_ref().expect("Map2 detached from graph");
         let input2 = self.input2.as_ref().expect("Map2 detached from graph");
         let f = self.f.as_ref().expect("Map2 detached from graph");
         let new_value = f(input1.observe(), input2.observe());
-        if new_value == self.value {
+        let mut output = self.output.state.borrow_mut();
+        if new_value == output.value {
             return vec![];
         }
-        self.value = new_value;
+        output.value = new_value;
         vec![StabilizationCallback::ValueChanged]
     }
+
     fn depth(&self) -> i32 {
-        self.depth
+        self.output.depth()
     }
+
     fn adjust_depth(&mut self, new_depth: i32) {
-        self.depth = new_depth;
+        self.output.state.borrow_mut().depth = new_depth;
     }
+
     fn teardown(&mut self) {
         self.input1 = None;
         self.input2 = None;
@@ -47,53 +46,48 @@ impl<I1: 'static, I2: 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O>
 ///
 /// Cloning a `Map2` produces a second handle to the same node.
 pub struct Map2<I1, I2, O> {
-    pub(crate) node: Rc<RefCell<_Map2<I1, I2, O>>>,
-}
-
-impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
-    fn id(&self) -> usize {
-        self.node.deref().borrow().id
-    }
-    fn observe(&self) -> O {
-        self.node.deref().borrow().value.clone()
-    }
-    fn depth(&self) -> i32 {
-        self.node.deref().borrow().depth
-    }
+    pub(crate) inner: Incr<O>,
+    pub(crate) marker: PhantomData<fn(I1, I2) -> O>,
 }
 
 impl<I1, I2, O> Clone for Map2<I1, I2, O> {
     fn clone(&self) -> Self {
         Self {
-            node: self.node.clone(),
+            inner: self.inner.clone(),
+            marker: PhantomData,
         }
     }
 }
 
-impl<I1, I2, O: Clone + 'static> Map2<I1, I2, O> {
-    /// Returns a boxed clone of this handle, suitable for passing to
-    /// [`Incrementars::map`], [`Incrementars::map2`], [`Incrementars::map3`],
-    /// [`Incrementars::mapn`], or [`Incrementars::bind`].
-    pub fn as_input(&self) -> Box<Map2<I1, I2, O>> {
-        Box::new(self.clone())
+impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
+    fn id(&self) -> usize {
+        self.inner.id()
+    }
+
+    fn observe(&self) -> O {
+        self.inner.observe()
+    }
+
+    fn depth(&self) -> i32 {
+        self.inner.depth()
     }
 }
 
 impl<I1, I2, O> Map2<I1, I2, O> {
     /// Borrows the node's current value without cloning it.
     pub fn observe_ref(&self) -> Ref<'_, O> {
-        Ref::map(self.node.deref().borrow(), |internal| &internal.value)
+        self.inner.observe_ref()
     }
 }
 
-impl<I1: 'static, I2: 'static, O: Clone + 'static> IntoInput<O> for Map2<I1, I2, O> {
-    fn into_input(self) -> Box<dyn Observable<O>> {
-        Box::new(self)
+impl<I1, I2, O: Clone> IntoInput<O> for Map2<I1, I2, O> {
+    fn into_input(self) -> Incr<O> {
+        self.inner
     }
 }
 
-impl<I1: 'static, I2: 'static, O: Clone + 'static> IntoInput<O> for Box<Map2<I1, I2, O>> {
-    fn into_input(self) -> Box<dyn Observable<O>> {
-        self
+impl<I1, I2, O: Clone> IntoInput<O> for &Map2<I1, I2, O> {
+    fn into_input(self) -> Incr<O> {
+        self.inner.clone()
     }
 }

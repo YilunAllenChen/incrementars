@@ -3,7 +3,7 @@ use incrementars::prelude::{Incrementars, Observable};
 pub fn main() {
     let mut dag = Incrementars::new();
     let length = dag.var(2.0);
-    let area = dag.map(length.as_input(), |x| {
+    let area = dag.map(&length, |x| {
         println!("calculating area");
         x * x
     });
@@ -20,7 +20,7 @@ pub fn main() {
 
     println!("introducing height...");
     let height = dag.var(5.0);
-    let volume = dag.map2(area.as_input(), height.as_input(), |x, y| {
+    let volume = dag.map2(&area, &height, |x, y| {
         println!("calculating volume");
         x * y
     });

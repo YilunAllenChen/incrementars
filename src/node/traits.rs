@@ -1,10 +1,15 @@
+use std::{
+    cell::{Ref, RefCell},
+    rc::Rc,
+};
+
 pub enum StabilizationCallback {
     ValueChanged,
     DependenciesUpdated { from: Vec<usize>, to: Vec<usize> },
 }
 
 /// Internal trait implemented by all node types. Not part of the public API;
-/// use [`Observable`] to read node values and pass nodes into the graph.
+/// use [`Observable`] and [`Incr`] to read node values and wire nodes together.
 pub(crate) trait Node {
     fn id(&self) -> usize;
     fn stabilize(&mut self) -> Vec<StabilizationCallback>;
@@ -13,19 +18,56 @@ pub(crate) trait Node {
     fn teardown(&mut self) {}
 }
 
+pub(crate) struct NodeState<T> {
+    pub(crate) id: usize,
+    pub(crate) depth: i32,
+    pub(crate) value: T,
+}
+
+impl<T> NodeState<T> {
+    pub(crate) fn new(id: usize, depth: i32, value: T) -> Self {
+        Self { id, depth, value }
+    }
+}
+
+/// A read-only handle to a node in the incremental graph.
+///
+/// `Incr<T>` is the common handle type used by graph-building APIs. Cloning it is
+/// cheap and creates another handle to the same node.
+pub struct Incr<T> {
+    pub(crate) state: Rc<RefCell<NodeState<T>>>,
+}
+
+impl<T> Clone for Incr<T> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+        }
+    }
+}
+
+impl<T> Incr<T> {
+    pub(crate) fn new(id: usize, depth: i32, value: T) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(NodeState::new(id, depth, value))),
+        }
+    }
+
+    pub(crate) fn id(&self) -> usize {
+        self.state.borrow().id
+    }
+
+    pub(crate) fn depth(&self) -> i32 {
+        self.state.borrow().depth
+    }
+
+    /// Borrows the node's current value without cloning it.
+    pub fn observe_ref(&self) -> Ref<'_, T> {
+        Ref::map(self.state.borrow(), |state| &state.value)
+    }
+}
+
 /// A node whose current value can be read.
-///
-/// Implemented by [`Var`](crate::node::Var), [`Map1`](crate::node::Map1),
-/// [`Map2`](crate::node::Map2), [`Map3`](crate::node::Map3),
-/// [`MapN`](crate::node::MapN), and
-/// [`Bind1`](crate::node::Bind1).
-///
-/// Pass a boxed node handle or any value implementing [`IntoInput`] to
-/// [`Incrementars::map`](crate::node::Incrementars::map),
-/// [`Incrementars::map2`](crate::node::Incrementars::map2),
-/// [`Incrementars::map3`](crate::node::Incrementars::map3),
-/// [`Incrementars::mapn`](crate::node::Incrementars::mapn), or
-/// [`Incrementars::bind`](crate::node::Incrementars::bind) to wire nodes together.
 pub trait Observable<T> {
     fn id(&self) -> usize;
     /// Returns the node's current value. Does **not** trigger recomputation;
@@ -35,20 +77,40 @@ pub trait Observable<T> {
     fn depth(&self) -> i32;
 }
 
-/// Converts a node handle into an input accepted by graph-construction APIs.
-pub trait IntoInput<T> {
-    fn into_input(self) -> Box<dyn Observable<T>>;
+impl<T: Clone> Observable<T> for Incr<T> {
+    fn id(&self) -> usize {
+        self.state.borrow().id
+    }
+
+    fn observe(&self) -> T {
+        self.state.borrow().value.clone()
+    }
+
+    fn depth(&self) -> i32 {
+        self.state.borrow().depth
+    }
 }
 
-impl<T> IntoInput<T> for Box<dyn Observable<T>> {
-    fn into_input(self) -> Box<dyn Observable<T>> {
+impl<T> PartialEq for Incr<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+/// Converts a node handle into an owned input accepted by graph-construction APIs.
+pub trait IntoInput<T> {
+    fn into_input(self) -> Incr<T>;
+}
+
+impl<T> IntoInput<T> for Incr<T> {
+    fn into_input(self) -> Incr<T> {
         self
     }
 }
 
-impl<T> PartialEq for dyn Observable<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
+impl<T> IntoInput<T> for &Incr<T> {
+    fn into_input(self) -> Incr<T> {
+        self.clone()
     }
 }
 
