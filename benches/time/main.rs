@@ -30,6 +30,36 @@ fn build_fanout(branches: usize) -> (Incrementars, Var<i32>) {
     (dag, input)
 }
 
+fn build_expand(layers: usize) -> (Incrementars, Var<i32>) {
+    let mut dag = Incrementars::new();
+    let input = dag.var(0);
+    let root: Map1<i32, i32> = dag.map(input.clone(), |x| x + 1);
+    let mut queue = vec![root];
+    for _ in 0..layers / 2 {
+        let head = queue.pop().unwrap();
+        let out1 = dag.map(head.clone(), |x| x + 1);
+        let out2 = dag.map(head, |x| x + 2);
+        queue.push(out1);
+        queue.push(out2);
+    }
+    (dag, input)
+}
+
+fn build_iter_tree(layers: usize) -> (Incrementars, Var<i32>) {
+    let mut dag = Incrementars::new();
+    let input = dag.var(0);
+    let root: Map1<i32, i32> = dag.map(input.clone(), |x| x);
+    let mut queue = vec![root];
+    for _ in 0..layers / 2 {
+        let head = queue.pop().unwrap();
+        let out1 = dag.map(head.clone(), |x| x);
+        let out2 = dag.map(head, |x| x);
+        queue.push(out1);
+        queue.push(out2);
+    }
+    (dag, input)
+}
+
 fn build_join(width: usize) -> (Incrementars, Vec<Var<i32>>) {
     let mut dag = Incrementars::new();
     let vars = (0..width as i32).map(|i| dag.var(i)).collect::<Vec<_>>();
@@ -152,6 +182,26 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 
     group.bench_with_input(
+        BenchmarkId::new("expand_stabilize", 150_000),
+        &150_000usize,
+        |b, &layers| {
+            let (mut dag, input) = build_expand(layers);
+            let mut val = 0i32;
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    val = 1 - val;
+                    input.set(black_box(val));
+                    let t = Instant::now();
+                    dag.stabilize();
+                    total += t.elapsed();
+                }
+                total
+            });
+        },
+    );
+
+    group.bench_with_input(
         BenchmarkId::new("join_stabilize", 10_000),
         &10_000usize,
         |b, &width| {
@@ -187,6 +237,24 @@ fn criterion_benchmark(c: &mut Criterion) {
                 }
                 let t = Instant::now();
                 dag.stabilize();
+                total += t.elapsed();
+            }
+            total
+        });
+    });
+
+    // Repeated stabilization throughput on a small binary tree (1k layers)
+    // using the same 30k stabilize loop as the legacy benchmark.
+    group.bench_function("iter_stabilize", |b| {
+        let (mut dag, input) = build_iter_tree(1_000);
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                let t = Instant::now();
+                for _ in 0..30_000 {
+                    input.set(black_box(10));
+                    dag.stabilize();
+                }
                 total += t.elapsed();
             }
             total
