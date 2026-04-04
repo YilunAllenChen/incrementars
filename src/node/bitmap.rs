@@ -13,17 +13,13 @@ impl Bitmap {
 
     pub fn insert(&mut self, value: usize) {
         let (index, bit) = (value / 64, value % 64);
-        if index < self.bits.len() {
-            self.bits[index] |= 1 << bit;
-        }
+        debug_assert!(index < self.bits.len(), "Bitmap::insert out of bounds: {value}");
+        self.bits[index] |= 1 << bit;
     }
 
     pub fn contains(&self, value: &usize) -> bool {
         let (index, bit) = (value / 64, value % 64);
-        if index < self.bits.len() {
-            (self.bits[index] & (1 << bit)) != 0
-        } else {
-            false
-        }
+        debug_assert!(index < self.bits.len(), "Bitmap::contains out of bounds: {value}");
+        (self.bits[index] & (1 << bit)) != 0
     }
 }

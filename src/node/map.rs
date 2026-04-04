@@ -1,12 +1,12 @@
 use std::{cell::Ref, marker::PhantomData};
 
-use super::traits::{Incr, IntoInput, Node, Observable, StabilizationResult};
+use super::traits::{Cutoff, Incr, IntoInput, Node, Observable, StabilizationResult};
 
 pub(crate) struct _Map1<I, O> {
     pub(crate) output: Incr<O>,
     pub(crate) input: Option<Incr<I>>,
     pub(crate) f: Option<Box<dyn Fn(I) -> O>>,
-    pub(crate) cutoff: Option<Box<dyn Fn(&O, &O) -> bool>>,
+    pub(crate) cutoff: Option<Cutoff<O>>,
 }
 
 impl<I: Clone + 'static, O: 'static> Node for _Map1<I, O> {
@@ -16,7 +16,7 @@ impl<I: Clone + 'static, O: 'static> Node for _Map1<I, O> {
         let new_value = f(input.observe());
         let mut output = self.output.state.borrow_mut();
         if let Some(cutoff) = &self.cutoff {
-            if cutoff(&new_value, &output.value) {
+            if cutoff.check(&new_value, &output.value) {
                 return StabilizationResult::Unchanged;
             }
         }

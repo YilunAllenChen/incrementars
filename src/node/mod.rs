@@ -1,12 +1,13 @@
-use std::cmp::{max, Reverse};
+use std::cmp::max;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::cmp::Reverse;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
 };
 
 use bitmap::Bitmap;
-use traits::StabilizationResult;
+use traits::{Cutoff, StabilizationResult};
 
 mod bind;
 mod bitmap;
@@ -30,6 +31,44 @@ pub use self::{
 // Vars are assigned height 0. Derived nodes add 1 per level, so the stabilization
 // queue (a min-heap on height) always processes inputs before their dependents.
 const VAR_HEIGHT: i32 = 0;
+
+/// A bucket queue (dial's algorithm) for the stabilization recompute queue.
+///
+/// O(1) push (indexed by height), O(max_height) full drain — better than the
+/// O(log n) per-operation cost of `BinaryHeap` for graphs with bounded heights.
+struct BucketQueue {
+    buckets: Vec<Vec<usize>>,
+    min_height: usize,
+}
+
+impl BucketQueue {
+    fn new() -> Self {
+        BucketQueue {
+            buckets: Vec::new(),
+            min_height: 0,
+        }
+    }
+
+    fn push(&mut self, height: usize, id: usize) {
+        if height >= self.buckets.len() {
+            self.buckets.resize_with(height + 1, Vec::new);
+        }
+        self.buckets[height].push(id);
+        if height < self.min_height {
+            self.min_height = height;
+        }
+    }
+
+    fn pop(&mut self) -> Option<usize> {
+        while self.min_height < self.buckets.len() {
+            if let Some(id) = self.buckets[self.min_height].pop() {
+                return Some(id);
+            }
+            self.min_height += 1;
+        }
+        None
+    }
+}
 
 struct InputNode {
     id: usize,
@@ -157,7 +196,7 @@ impl Incrementars {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
-            cutoff: Some(Box::new(|a, b| a == b)),
+            cutoff: Some(Cutoff::Direct(<O as PartialEq>::eq)),
         });
         self.nodes[id] = Some(node);
         Map1 {
@@ -185,7 +224,7 @@ impl Incrementars {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
-            cutoff: Some(Box::new(cutoff)),
+            cutoff: Some(Cutoff::Custom(Box::new(cutoff))),
         });
         self.nodes[id] = Some(node);
         Map1 {
@@ -222,7 +261,7 @@ impl Incrementars {
             input1: Some(input1),
             input2: Some(input2),
             f: Some(Box::new(f)),
-            cutoff: Some(Box::new(|a, b| a == b)),
+            cutoff: Some(Cutoff::Direct(<O as PartialEq>::eq)),
         });
         self.nodes[id] = Some(node);
         Map2 {
@@ -268,7 +307,7 @@ impl Incrementars {
             input2: Some(input2),
             input3: Some(input3),
             f: Some(Box::new(f)),
-            cutoff: Some(Box::new(|a, b| a == b)),
+            cutoff: Some(Cutoff::Direct(<O as PartialEq>::eq)),
         });
         self.nodes[id] = Some(node);
         Map3 {
@@ -314,7 +353,7 @@ impl Incrementars {
             output: output.clone(),
             inputs: Some(inputs),
             f: Some(Box::new(f)),
-            cutoff: Some(Box::new(|a, b| a == b)),
+            cutoff: Some(Cutoff::Direct(<O as PartialEq>::eq)),
         });
         self.nodes[id] = Some(node);
         MapN {
@@ -462,22 +501,17 @@ impl Incrementars {
     /// output equals its previous output (cutoff). After this call returns, all
     /// observable values reflect the latest inputs.
     pub fn stabilize(&mut self) {
-        let mut queue = self
-            .inputs
-            .iter()
-            .filter(|input| input.dirty.get())
-            .map(|input| input.id)
-            .map(|id| {
-                let node = self.node(id);
-                (Reverse(node.depth()), id)
-            })
-            .collect::<BinaryHeap<(Reverse<i32>, usize)>>();
+        let mut queue = BucketQueue::new();
+        for input in self.inputs.iter().filter(|input| input.dirty.get()) {
+            let height = self.node(input.id).depth() as usize;
+            queue.push(height, input.id);
+        }
 
         let mut visited = Bitmap::new(self.id_counter);
         let mut changed = Bitmap::new(self.id_counter);
         let mut changed_nodes = vec![];
 
-        while let Some((_, head_id)) = queue.pop() {
+        while let Some(head_id) = queue.pop() {
             let callbacks = {
                 let head = self.node_mut(head_id);
                 head.stabilize()
@@ -493,8 +527,8 @@ impl Incrementars {
                     for &child_id in &self.dependencies[head_id] {
                         if !visited.contains(&child_id) {
                             visited.insert(child_id);
-                            let height = self.node(child_id).depth();
-                            queue.push((Reverse(height), child_id));
+                            let height = self.node(child_id).depth() as usize;
+                            queue.push(height, child_id);
                         }
                     }
                 }
@@ -507,8 +541,18 @@ impl Incrementars {
                     self.reverse_dependencies[head_id].retain(|&x| x != from);
                     self.add_edge(to, head_id);
 
-                    let mut adjust_queue = vec![head_id];
-                    while let Some(node_id) = adjust_queue.pop() {
+                    // Use a min-heap ordered by current height so parents are always
+                    // settled before their children (topological order). A DFS stack
+                    // could visit a shared descendant before all of its parents have
+                    // been updated, producing a stale max() and wrong height on diamond
+                    // graphs.
+                    let mut adjust_heap: BinaryHeap<(Reverse<i32>, usize)> = BinaryHeap::new();
+                    adjust_heap.push((Reverse(self.node(head_id).depth()), head_id));
+                    // Height upper bound for a DAG: at most id_counter levels.
+                    // A cycle via bind would push heights toward infinity, so any
+                    // height exceeding this bound means a cycle was introduced.
+                    let max_valid_height = self.id_counter as i32;
+                    while let Some((_, node_id)) = adjust_heap.pop() {
                         let max_parent_height = self.reverse_dependencies[node_id]
                             .iter()
                             .filter_map(|&pid| self.nodes[pid].as_ref().map(|node| node.depth()))
@@ -516,10 +560,15 @@ impl Incrementars {
 
                         if let Some(parent_height) = max_parent_height {
                             let new_height = parent_height + 1;
-                            let old_height = self.node(node_id).depth();
-                            if new_height != old_height {
+                            assert!(
+                                new_height <= max_valid_height,
+                                "incrementars: cycle detected during height adjustment (node {node_id})"
+                            );
+                            if new_height != self.node(node_id).depth() {
                                 self.node_mut(node_id).adjust_depth(new_height);
-                                adjust_queue.extend(self.dependencies[node_id].iter().copied());
+                                for &child_id in &self.dependencies[node_id] {
+                                    adjust_heap.push((Reverse(self.node(child_id).depth()), child_id));
+                                }
                             }
                         }
                     }
@@ -532,8 +581,8 @@ impl Incrementars {
                         for &child_id in &self.dependencies[head_id] {
                             if !visited.contains(&child_id) {
                                 visited.insert(child_id);
-                                let height = self.node(child_id).depth();
-                                queue.push((Reverse(height), child_id));
+                                let height = self.node(child_id).depth() as usize;
+                                queue.push(height, child_id);
                             }
                         }
                     }
@@ -970,5 +1019,53 @@ mod tests {
         y.set(20);
         dag.stabilize();
         assert_eq!(unaffected.observe(), 25);
+    }
+
+    /// Bind rewires to a deeper parent; the rebound node fans out into two
+    /// parallel paths that both converge on a single downstream node (diamond).
+    /// Correct topological height propagation must ensure the shared sink
+    /// receives height = max-path-length + 1, not an intermediate value set
+    /// by whichever path the traversal happened to visit first.
+    #[test]
+    fn test_bind_adjust_depth_diamond() {
+        let mut dag = Incrementars::new();
+
+        // shallow: height 0
+        let shallow = dag.var(0i32);
+        // deep: height 0, but after bind rewire becomes the chosen parent → deeper
+        let deep_root = dag.var(0i32);
+        // Build a 3-level chain off deep_root so it sits at height 3.
+        let d1 = dag.map(&deep_root, |x| x);
+        let d2 = dag.map(&d1, |x| x);
+        let deep = dag.map(&d2, |x| x); // height 3
+
+        // chooser: picks between shallow (height 0) and deep (height 3)
+        let chooser = dag.var(false);
+        let shallow_c = shallow.clone();
+        let deep_c = deep.clone();
+        let binder = dag.bind(&chooser, move |use_deep| {
+            if use_deep {
+                deep_c.clone().into_input()
+            } else {
+                shallow_c.clone().into_input()
+            }
+        });
+        // binder initially wired to shallow → height 1
+
+        // Two independent paths from binder converging on a shared sink.
+        let arm_a = dag.map(&binder, |x| x);    // height 2
+        let arm_b = dag.map(&binder, |x| x);    // height 2
+        let sink = dag.map2(&arm_a, &arm_b, |a, b| a + b); // height 3
+
+        let sink_initial_depth = sink.depth();
+
+        // Rewire binder to the deep branch (height 3).
+        // binder should move to height 4, arm_a/arm_b to 5, sink to 6.
+        chooser.set(true);
+        dag.stabilize();
+
+        assert_eq!(arm_a.depth(), sink_initial_depth + 2);
+        assert_eq!(arm_b.depth(), sink_initial_depth + 2);
+        assert_eq!(sink.depth(), sink_initial_depth + 3);
     }
 }

@@ -14,12 +14,12 @@ The core idea: declare a computation graph once. When inputs change, only the af
 
 | Feature | incrementars | Jane Street Incremental |
 |---------|-------------|-------------------------|
-| Ordering | Height-based, min-heap | Height-based, array-of-lists |
+| Ordering | Height-based, bucket queue | Height-based, array-of-lists |
 | Node types | Var, Map1–3, MapN, Bind1 | Var, Map, Bind, Observer, Expert, Freeze, Clock |
 | Cutoff | Per-node `Fn(&O, &O) -> bool` | Per-node `('a -> 'a -> bool)` |
 | Observer pattern | None — read any node freely | Explicit `Observer` marks needed outputs |
 | Node states | dirty / clean | invalid / necessary / stale |
-| Cycle detection | None | Detects during height adjustment |
+| Cycle detection | Panics on height overflow | Raises error during height adjustment |
 | Thread safety | Single-threaded (`Rc/RefCell`) | Single-threaded |
 
 **What's deliberately different:**
@@ -120,13 +120,32 @@ dag.stabilize(); // result now tracks `right`
 
 ## Performance
 
-Per-node stabilization overhead on a linear chain (Apple Silicon, release build):
+Benchmarks on Apple Silicon (2021 M1 Max), release build. Graph is built once; each iteration calls `stabilize()` once on a pre-dirtied graph. Per-node overhead = (stabilize − raw equivalent) / N.
 
-| Chain length | Raw Rust loop | incrementars | Overhead/node |
-|---|---|---|---|
-| 100 | 128 ns | 2,900 ns | ~28 ns |
-| 1,000 | 1,261 ns | 25,900 ns | ~25 ns |
-| 10,000 | 12,534 ns | 251,000 ns | ~24 ns |
-| 100,000 | 125,370 ns | 2,646,000 ns | ~25 ns |
+### Realistic mixed graph (100 layers × 100 nodes = 10,000 nodes)
 
-The ~25 ns/node overhead comes from `Rc<RefCell>` borrows, heap operations, dirty-flag checks, and cutoff dispatch. For any node whose `f` does meaningful work, this overhead is negligible.
+Mix: 50% `map`, 25% `map2`, 12.5% `map3`, 12.5% `bind`. All inputs dirtied each iteration; full graph recomputes. Simple arithmetic (`x+1`, `a+b`, `(a+b+c)/3`).
+
+| Nodes | Raw equivalent | Stabilize | Overhead/node |
+|-------|----------------|-----------|---------------|
+| 10,000 | ~7 µs | 233 µs | **~23 ns** |
+
+With 100 nodes per height level the bucket queue processes each level in a tight loop with no resize — good cache behavior and O(1) per push.
+
+### Linear chain (`x + 1` repeated N times)
+
+Each node sits at a unique height; the bucket queue allocates and scans N distinct slots.
+
+| Chain | Raw loop | Stabilize | Overhead/node |
+|-------|----------|-----------|---------------|
+| 100 | 66 ns | 4,586 ns | ~45 ns |
+| 1,000 | 701 ns | 42,102 ns | ~41 ns |
+| 10,000 | 6,991 ns | 429,120 ns | ~42 ns |
+| 100,000 | 69,318 ns | 4,872,100 ns | ~48 ns |
+
+### Fanout & join graphs
+
+| Graph | Stabilize |
+|-------|-----------|
+| Fanout: 1 var → 50,000 maps (height 1) | 653 µs |
+| Join: 10,000 vars → 1 mapn | 124 µs |

@@ -3,6 +3,26 @@ use std::{
     rc::Rc,
 };
 
+/// How a map node decides whether to propagate a newly computed value downstream.
+///
+/// `Direct` stores a bare function pointer (zero allocation, devirtualizable by LLVM
+/// when the callee is known at monomorphization time, e.g. `PartialEq::eq`).
+/// `Custom` stores a heap-allocated closure for caller-supplied predicates.
+pub(crate) enum Cutoff<O> {
+    Direct(fn(&O, &O) -> bool),
+    Custom(Box<dyn Fn(&O, &O) -> bool>),
+}
+
+impl<O> Cutoff<O> {
+    #[inline]
+    pub(crate) fn check(&self, new: &O, old: &O) -> bool {
+        match self {
+            Cutoff::Direct(f) => f(new, old),
+            Cutoff::Custom(f) => f(new, old),
+        }
+    }
+}
+
 pub enum StabilizationResult {
     Unchanged,
     Changed,

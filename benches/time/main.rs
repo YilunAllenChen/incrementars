@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use incrementars::prelude::{Incrementars, Map1, Var};
-use std::time::Duration;
+use incrementars::prelude::{Incr, Incrementars, IntoInput, Map1, Var};
+use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
 fn raw_linear(count: usize, start: i32) -> i32 {
@@ -37,6 +37,64 @@ fn build_join(width: usize) -> (Incrementars, Vec<Var<i32>>) {
     (dag, vars)
 }
 
+/// Builds a layered DAG: `depth` layers × `width` nodes each.
+///
+/// Node mix per layer (deterministic, based on position):
+///   50% map    — x + 1
+///   25% map2   — a + b
+///  12.5% map3  — (a + b + c) / 3
+///  12.5% bind  — selector fixed at 0, always picks one of two parents; no rewires
+///
+/// Returns the graph and the input Var handles (one per node in layer 0).
+/// A second set of selector Vars drives the bind nodes but is never dirtied
+/// during the benchmark, so bind stabilization follows the normal Changed/Unchanged
+/// path rather than the Rebound path.
+fn build_realistic(depth: usize, width: usize) -> (Incrementars, Vec<Var<i32>>) {
+    let mut dag = Incrementars::new();
+
+    let input_vars: Vec<Var<i32>> = (0..width).map(|i| dag.var(i as i32)).collect();
+    // Selector vars for bind: held at 0 throughout the benchmark.
+    let selector_vars: Vec<Var<i32>> = (0..width).map(|_| dag.var(0i32)).collect();
+
+    let mut layer: Vec<Incr<i32>> = input_vars.iter().map(|v| v.clone().into_input()).collect();
+    let sel_layer: Vec<Incr<i32>> = selector_vars.iter().map(|v| v.clone().into_input()).collect();
+
+    for d in 1..depth {
+        let mut next: Vec<Incr<i32>> = Vec::with_capacity(width);
+        for i in 0..width {
+            // 0-7 → map (50%), 8-11 → map2 (25%), 12-13 → map3 (12.5%), 14-15 → bind (12.5%)
+            let kind = (d.wrapping_mul(97).wrapping_add(i.wrapping_mul(31))) % 16;
+            let p = |off: usize| layer[(i + off) % width].clone();
+            let incr: Incr<i32> = match kind {
+                0..=7 => dag.map(p(0), |x| x.wrapping_add(1)).into_input(),
+                8..=11 => dag.map2(p(0), p(3), |a, b| a.wrapping_add(b)).into_input(),
+                12..=13 => {
+                    dag.map3(p(0), p(3), p(7), |a, b, c| a.wrapping_add(b).wrapping_add(c) / 3)
+                        .into_input()
+                }
+                _ => {
+                    // bind: selector is always 0 → always selects p(3), never p(7)
+                    let sel = sel_layer[i % width].clone();
+                    let p_even = p(3);
+                    let p_odd = p(7);
+                    dag.bind(sel, move |v| {
+                        if v % 2 == 0 {
+                            p_even.clone()
+                        } else {
+                            p_odd.clone()
+                        }
+                    })
+                    .into_input()
+                }
+            };
+            next.push(incr);
+        }
+        layer = next;
+    }
+
+    (dag, input_vars)
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("incrementars");
     group
@@ -56,11 +114,18 @@ fn criterion_benchmark(c: &mut Criterion) {
             &size,
             |b, &size| {
                 let (mut dag, input) = build_linear(size);
-                b.iter(|| {
-                    input.set(black_box(1));
-                    dag.stabilize();
-                    input.set(black_box(0));
-                    dag.stabilize();
+                let mut val = 0i32;
+                b.iter_custom(|iters| {
+                    let mut total = Duration::ZERO;
+                    for _ in 0..iters {
+                        // Set outside the timed region so we measure only stabilize().
+                        val = 1 - val;
+                        input.set(black_box(val));
+                        let t = Instant::now();
+                        dag.stabilize();
+                        total += t.elapsed();
+                    }
+                    total
                 });
             },
         );
@@ -71,11 +136,17 @@ fn criterion_benchmark(c: &mut Criterion) {
         &50_000usize,
         |b, &branches| {
             let (mut dag, input) = build_fanout(branches);
-            b.iter(|| {
-                input.set(black_box(1));
-                dag.stabilize();
-                input.set(black_box(0));
-                dag.stabilize();
+            let mut val = 0i32;
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    val = 1 - val;
+                    input.set(black_box(val));
+                    let t = Instant::now();
+                    dag.stabilize();
+                    total += t.elapsed();
+                }
+                total
             });
         },
     );
@@ -85,24 +156,54 @@ fn criterion_benchmark(c: &mut Criterion) {
         &10_000usize,
         |b, &width| {
             let (mut dag, vars) = build_join(width);
-            b.iter(|| {
-                for (index, var) in vars.iter().enumerate() {
-                    var.set(black_box(index as i32 + 1));
+            let mut val = 0i32;
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    val = 1 - val;
+                    for var in vars.iter() {
+                        var.set(black_box(val));
+                    }
+                    let t = Instant::now();
+                    dag.stabilize();
+                    total += t.elapsed();
                 }
-                dag.stabilize();
+                total
             });
         },
     );
 
-    // Baseline: same x+1 computation N times in plain Rust (no framework)
+    // Realistic mixed graph: 100 layers × 100 nodes (10k total), mix of map/map2/map3/bind.
+    // All 100 input vars are dirtied before each stabilize, so the full graph recomputes.
+    group.bench_function("realistic_stabilize", |b| {
+        let (mut dag, inputs) = build_realistic(100, 100);
+        let mut val = 0i32;
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                val = val.wrapping_add(1);
+                for input in &inputs {
+                    input.set(black_box(val));
+                }
+                let t = Instant::now();
+                dag.stabilize();
+                total += t.elapsed();
+            }
+            total
+        });
+    });
+
+    // Baseline: same x+1 computation N times in plain Rust (no framework),
+    // one call per iteration to match the stabilize benchmarks above.
     for size in [100usize, 1_000, 10_000, 100_000] {
         group.bench_with_input(
             BenchmarkId::new("raw_linear", size),
             &size,
             |b, &size| {
+                let mut val = 0i32;
                 b.iter(|| {
-                    black_box(raw_linear(size, black_box(1)));
-                    black_box(raw_linear(size, black_box(0)));
+                    val = 1 - val;
+                    black_box(raw_linear(size, black_box(val)));
                 });
             },
         );
