@@ -1,15 +1,13 @@
-use std::{cell::Ref, marker::PhantomData};
+use super::traits::{Cutoff, InternalNode, Observable, Signal, StabilizationResult};
 
-use super::traits::{Cutoff, Incr, IntoInput, Node, Observable, StabilizationResult};
-
-pub(crate) struct _Map1<I, O> {
-    pub(crate) output: Incr<O>,
-    pub(crate) input: Option<Incr<I>>,
+pub(crate) struct MapNode1<I, O> {
+    pub(crate) output: Signal<O>,
+    pub(crate) input: Option<Signal<I>>,
     pub(crate) f: Option<Box<dyn Fn(I) -> O>>,
     pub(crate) cutoff: Option<Cutoff<O>>,
 }
 
-impl<I: Clone + 'static, O: 'static> Node for _Map1<I, O> {
+impl<I: Clone + 'static, O: 'static> InternalNode for MapNode1<I, O> {
     fn stabilize(&mut self) -> StabilizationResult {
         let input = self.input.as_ref().expect("Map1 detached from graph");
         let f = self.f.as_ref().expect("Map1 detached from graph");
@@ -36,55 +34,5 @@ impl<I: Clone + 'static, O: 'static> Node for _Map1<I, O> {
         self.input = None;
         self.f = None;
         self.cutoff = None;
-    }
-}
-
-/// A node that maps one upstream value through a function. Create with [`Incrementars::map`].
-///
-/// Cloning a `Map1` produces a second handle to the same node.
-pub struct Map1<I, O> {
-    pub(crate) inner: Incr<O>,
-    pub(crate) marker: PhantomData<fn(I) -> O>,
-}
-
-impl<I, O> Clone for Map1<I, O> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<I, O: Clone> Observable<O> for Map1<I, O> {
-    fn id(&self) -> usize {
-        self.inner.id()
-    }
-
-    fn observe(&self) -> O {
-        self.inner.observe()
-    }
-
-    fn depth(&self) -> i32 {
-        self.inner.depth()
-    }
-}
-
-impl<I, O> Map1<I, O> {
-    /// Borrows the node's current value without cloning it.
-    pub fn observe_ref(&self) -> Ref<'_, O> {
-        self.inner.observe_ref()
-    }
-}
-
-impl<I, O: Clone> IntoInput<O> for Map1<I, O> {
-    fn into_input(self) -> Incr<O> {
-        self.inner
-    }
-}
-
-impl<I, O: Clone> IntoInput<O> for &Map1<I, O> {
-    fn into_input(self) -> Incr<O> {
-        self.inner.clone()
     }
 }

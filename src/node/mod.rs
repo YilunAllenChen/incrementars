@@ -19,12 +19,7 @@ mod traits;
 mod var;
 
 pub use self::{
-    bind::Bind1,
-    map::Map1,
-    map2::Map2,
-    map3::Map3,
-    mapn::MapN,
-    traits::{Incr, IntoInput, Observable},
+    traits::{Bind, IntoInput, Map1, Map2, Map3, MapN, Observable, Signal, ValueState},
     var::Var,
 };
 
@@ -70,23 +65,23 @@ impl BucketQueue {
     }
 }
 
-struct InputNode {
+pub struct DirtyInput {
     id: usize,
     dirty: Rc<Cell<bool>>,
 }
 
 /// The incremental computation graph.
 ///
-/// Create input nodes with [`var`](Incrementars::var), wire them together with
-/// [`map`](Incrementars::map), [`map2`](Incrementars::map2),
-/// [`map3`](Incrementars::map3), [`mapn`](Incrementars::mapn), and
-/// [`bind`](Incrementars::bind), then call [`stabilize`](Incrementars::stabilize)
+/// Create input nodes with [`var`](Graph::var), wire them together with
+/// [`map`](Graph::map), [`map2`](Graph::map2),
+/// [`map3`](Graph::map3), [`mapn`](Graph::mapn), and
+/// [`bind`](Graph::bind), then call [`stabilize`](Graph::stabilize)
 /// to propagate pending changes through the graph.
 ///
 /// # Example
 /// ```
 /// use incrementars::prelude::*;
-/// let mut dag = Incrementars::new();
+/// let mut dag = Graph::new();
 /// let x = dag.var(2);
 /// let y = dag.map(&x, |v| v * v);
 /// assert_eq!(y.observe(), 4);
@@ -94,13 +89,13 @@ struct InputNode {
 /// dag.stabilize();
 /// assert_eq!(y.observe(), 9);
 /// ```
-pub struct Incrementars {
+pub struct Graph {
     // node id → node handle. IDs are assigned sequentially from 0 by next_id(),
     // and remain stable even after removal.
-    nodes: Vec<Option<Box<dyn traits::Node>>>,
+    nodes: Vec<Option<Box<dyn traits::InternalNode>>>,
     id_counter: usize,
 
-    inputs: Vec<InputNode>,
+    inputs: Vec<DirtyInput>,
     // parent_id → [child_ids]: which nodes depend on a given node
     pub(crate) dependencies: Vec<Vec<usize>>,
     // child_id → [parent_ids]: which nodes a given node depends on
@@ -113,7 +108,7 @@ pub struct Incrementars {
     hook_index: HashMap<usize, usize>,
 }
 
-impl Incrementars {
+impl Graph {
     /// Creates an empty graph.
     pub fn new() -> Self {
         Self {
@@ -139,13 +134,13 @@ impl Incrementars {
         id
     }
 
-    fn node(&self, id: usize) -> &dyn traits::Node {
+    fn node(&self, id: usize) -> &dyn traits::InternalNode {
         self.nodes[id]
             .as_deref()
             .expect("node id missing from graph")
     }
 
-    fn node_mut(&mut self, id: usize) -> &mut dyn traits::Node {
+    fn node_mut(&mut self, id: usize) -> &mut dyn traits::InternalNode {
         self.nodes[id]
             .as_deref_mut()
             .expect("node id missing from graph")
@@ -163,13 +158,13 @@ impl Incrementars {
     /// Creates an input node holding `value`.
     ///
     /// Use [`Var::set`] to update the value. Changes are not visible to downstream
-    /// nodes until the next call to [`stabilize`](Incrementars::stabilize).
+    /// nodes until the next call to [`stabilize`](Graph::stabilize).
     pub fn var<T: Clone + 'static>(&mut self, value: T) -> Var<T> {
         let id = self.next_id();
-        let state = Rc::new(RefCell::new(traits::NodeState::new(id, VAR_HEIGHT, value)));
+        let state = Rc::new(RefCell::new(traits::ValueState::new(id, VAR_HEIGHT, value)));
         let dirty = Rc::new(Cell::new(false));
-        self.nodes[id] = Some(Box::new(var::_Var::new(state.clone(), dirty.clone())));
-        self.inputs.push(InputNode {
+        self.nodes[id] = Some(Box::new(var::VarNode::new(state.clone(), dirty.clone())));
+        self.inputs.push(DirtyInput {
             id,
             dirty: dirty.clone(),
         });
@@ -191,8 +186,8 @@ impl Incrementars {
         let id = self.next_id();
         let input_id = input.id();
         self.add_edge(input_id, id);
-        let output = Incr::new(id, input.depth() + 1, f(input.observe()));
-        let node = Box::new(map::_Map1 {
+        let output = Signal::new(id, input.depth() + 1, f(input.observe()));
+        let node = Box::new(map::MapNode1 {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
@@ -201,11 +196,11 @@ impl Incrementars {
         self.nodes[id] = Some(node);
         Map1 {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Like [`map`](Incrementars::map) but with a custom cutoff predicate instead of `PartialEq`.
+    /// Like [`map`](Graph::map) but with a custom cutoff predicate instead of `PartialEq`.
     ///
     /// `cutoff(old, new)` returning `true` suppresses downstream propagation.
     /// Pass `|_, _| false` to always propagate (no cutoff). Does not require `O: PartialEq`.
@@ -219,8 +214,8 @@ impl Incrementars {
         let id = self.next_id();
         let input_id = input.id();
         self.add_edge(input_id, id);
-        let output = Incr::new(id, input.depth() + 1, f(input.observe()));
-        let node = Box::new(map::_Map1 {
+        let output = Signal::new(id, input.depth() + 1, f(input.observe()));
+        let node = Box::new(map::MapNode1 {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
@@ -229,7 +224,7 @@ impl Incrementars {
         self.nodes[id] = Some(node);
         Map1 {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -251,12 +246,12 @@ impl Incrementars {
         let (id1, id2) = (input1.id(), input2.id());
         self.add_edge(id1, id);
         self.add_edge(id2, id);
-        let output = Incr::new(
+        let output = Signal::new(
             id,
             max(input1.depth(), input2.depth()) + 1,
             f(input1.observe(), input2.observe()),
         );
-        let node = Box::new(map2::_Map2 {
+        let node = Box::new(map2::MapNode2 {
             output: output.clone(),
             input1: Some(input1),
             input2: Some(input2),
@@ -266,7 +261,7 @@ impl Incrementars {
         self.nodes[id] = Some(node);
         Map2 {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -296,12 +291,12 @@ impl Incrementars {
         self.add_edge(id1, id);
         self.add_edge(id2, id);
         self.add_edge(id3, id);
-        let output = Incr::new(
+        let output = Signal::new(
             id,
             max(max(input1.depth(), input2.depth()), input3.depth()) + 1,
             f(input1.observe(), input2.observe(), input3.observe()),
         );
-        let node = Box::new(map3::_Map3 {
+        let node = Box::new(map3::MapNode3 {
             output: output.clone(),
             input1: Some(input1),
             input2: Some(input2),
@@ -312,7 +307,7 @@ impl Incrementars {
         self.nodes[id] = Some(node);
         Map3 {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -344,12 +339,12 @@ impl Incrementars {
             .max()
             .expect("mapn requires at least one input")
             + 1;
-        let output = Incr::new(
+        let output = Signal::new(
             id,
             depth,
             f(inputs.iter().map(|input| input.observe()).collect()),
         );
-        let node = Box::new(mapn::_MapN {
+        let node = Box::new(mapn::MapNodeN {
             output: output.clone(),
             inputs: Some(inputs),
             f: Some(Box::new(f)),
@@ -358,7 +353,7 @@ impl Incrementars {
         self.nodes[id] = Some(node);
         MapN {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -372,16 +367,16 @@ impl Incrementars {
     pub fn bind<I: Clone + 'static, O: Clone + PartialEq + 'static>(
         &mut self,
         input: impl IntoInput<I>,
-        f: impl Fn(I) -> Incr<O> + 'static,
-    ) -> Bind1<I, O> {
+        f: impl Fn(I) -> Signal<O> + 'static,
+    ) -> Bind<I, O> {
         let input = input.into_input();
         let id = self.next_id();
         let input_id = input.id();
         let value = f(input.observe());
         let value_id = value.id();
         let depth = max(input.depth(), value.depth()) + 1;
-        let output = Incr::new(id, depth, value.observe());
-        let node = Box::new(bind::_Bind1 {
+        let output = Signal::new(id, depth, value.observe());
+        let node = Box::new(bind::BindNode {
             output: output.clone(),
             value: Some(value),
             input: Some(input),
@@ -390,17 +385,17 @@ impl Incrementars {
         self.add_edge(input_id, id);
         self.add_edge(value_id, id);
         self.nodes[id] = Some(node);
-        Bind1 {
+        Bind {
             inner: output,
-            marker: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Registers a callback that runs after [`stabilize`](Incrementars::stabilize)
+    /// Registers a callback that runs after [`stabilize`](Graph::stabilize)
     /// whenever `input` changes.
     ///
     /// Pass a node handle directly, including `&node`. Returns a watcher ID that
-    /// can be removed later with [`unwatch`](Incrementars::unwatch).
+    /// can be removed later with [`unwatch`](Graph::unwatch).
     pub fn watch<T: Clone + 'static>(
         &mut self,
         input: impl IntoInput<T>,
@@ -598,13 +593,13 @@ impl Incrementars {
     }
 }
 
-impl Default for Incrementars {
+impl Default for Graph {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Drop for Incrementars {
+impl Drop for Graph {
     fn drop(&mut self) {
         for node in self.nodes.iter_mut().filter_map(Option::as_mut) {
             node.teardown();
@@ -620,7 +615,7 @@ mod tests {
 
     #[test]
     fn var_instantiation() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var = dag.var(0);
         var.set(10);
         assert_eq!(var.observe(), 10);
@@ -628,7 +623,7 @@ mod tests {
 
     #[test]
     fn map_instantiation() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var = dag.var(0);
         let map = dag.map(var, |x| x + 1);
         assert_eq!(map.observe(), 1);
@@ -636,7 +631,7 @@ mod tests {
 
     #[test]
     fn bifurcate() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var = dag.var(0);
         let map = dag.map(&var, |x| x + 1);
         let map2 = dag.map(&var, |x| x + 1);
@@ -652,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_map2() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var1 = dag.var(50);
         let var2 = dag.var(" dollars");
         let map2 = dag.map2(&var1, &var2, |x, y| x.to_string() + y);
@@ -661,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_combinatoric() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var1 = dag.var(50);
         let plus_one = |x| x + 1;
         let var21 = dag.map(&var1, plus_one);
@@ -677,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_map3() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let left = dag.var(2);
         let middle = dag.var(3);
         let right = dag.var(4);
@@ -691,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_mapn() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let a = dag.var(2);
         let b = dag.var(3);
         let c = dag.var(4);
@@ -705,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_observe_ref_non_clone_output() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(3);
         let text = dag.map(x.clone(), |value| format!("value={value}").into_bytes());
 
@@ -718,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_bind() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let left = dag.var(1);
         let right = dag.var(2);
         let left_id = traits::Observable::id(&left);
@@ -732,7 +727,7 @@ mod tests {
 
         let picker = dag.var(Side::Left);
 
-        fn pick(left: Var<i32>, right: Var<i32>) -> impl Fn(Side) -> Incr<i32> {
+        fn pick(left: Var<i32>, right: Var<i32>) -> impl Fn(Side) -> Signal<i32> {
             move |side| match side {
                 Side::Left => left.clone().into_input(),
                 Side::Right => right.clone().into_input(),
@@ -754,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_bind_adjust_depth_propagation() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let left_root = dag.var(1);
         let right_root = dag.var(-1);
         let left_map = dag.map(&left_root, |x| x * 2);
@@ -767,7 +762,7 @@ mod tests {
 
         let picker = dag.var(Side::Right);
 
-        fn pick(left: Map1<i32, i32>, right: Var<i32>) -> impl Fn(Side) -> Incr<i32> {
+        fn pick(left: Map1<i32, i32>, right: Var<i32>) -> impl Fn(Side) -> Signal<i32> {
             move |side| match side {
                 Side::Left => left.clone().into_input(),
                 Side::Right => right.clone().into_input(),
@@ -791,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_bind_propagates_inner_value_changes() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let selected = dag.var(10);
         let chooser = dag.var(());
         let selected_for_bind = selected.clone();
@@ -809,7 +804,7 @@ mod tests {
     #[test]
     fn test_bind_same_node_same_value_does_not_recompute_downstream() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let chooser = dag.var(0);
         let selected = dag.var(10);
         let selected_for_bind = selected.clone();
@@ -831,7 +826,7 @@ mod tests {
     #[test]
     fn test_bind_rewire_same_value_does_not_recompute_downstream() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let left = dag.var(10);
         let right = dag.var(10);
 
@@ -843,7 +838,7 @@ mod tests {
 
         let chooser = dag.var(Side::Left);
 
-        fn pick(left: Var<i32>, right: Var<i32>) -> impl Fn(Side) -> Incr<i32> {
+        fn pick(left: Var<i32>, right: Var<i32>) -> impl Fn(Side) -> Signal<i32> {
             move |side| match side {
                 Side::Left => left.clone().into_input(),
                 Side::Right => right.clone().into_input(),
@@ -867,7 +862,7 @@ mod tests {
 
     #[test]
     fn test_real_life() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let length = dag.var(2.0);
         let area = dag.map(&length, |x| x * x);
 
@@ -892,7 +887,7 @@ mod tests {
     fn test_combinatorial_only_fire_once_at_combine() {
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let var1 = dag.var(1);
         let plus_one = |x| x + 1;
         let left1 = dag.map(&var1, plus_one);
@@ -912,7 +907,7 @@ mod tests {
     fn test_map2_same_input_twice() {
         // Regression: passing the same node as both inputs to map2 should not
         // create duplicate edges or cause incorrect behaviour.
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(3);
         let squared = dag.map2(&x, &x, |a, b| a * b);
         assert_eq!(squared.observe(), 9);
@@ -924,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_watch_and_unwatch() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(2);
         let doubled = dag.map(&x, |value| value * 2);
         let seen = Arc::new(AtomicUsize::new(0));
@@ -947,7 +942,7 @@ mod tests {
     #[test]
     fn test_set_if_changed_does_not_propagate() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(5);
         let c = Arc::clone(&counter);
         dag.map(&x, move |v| {
@@ -970,7 +965,7 @@ mod tests {
     #[test]
     fn test_map_with_cutoff() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(1.0f64);
         // Cutoff: suppress downstream propagation when output changes by less than 0.5
         let out = dag.map_with_cutoff(&x, |v| v * 2.0, |old, new| (old - new).abs() < 0.5);
@@ -1003,7 +998,7 @@ mod tests {
 
     #[test]
     fn test_remove_subgraph() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
         let x = dag.var(1);
         let y = dag.var(10);
         let left = dag.map(&x, |value| value + 1);
@@ -1028,7 +1023,7 @@ mod tests {
     /// by whichever path the traversal happened to visit first.
     #[test]
     fn test_bind_adjust_depth_diamond() {
-        let mut dag = Incrementars::new();
+        let mut dag = Graph::new();
 
         // shallow: height 0
         let shallow = dag.var(0i32);

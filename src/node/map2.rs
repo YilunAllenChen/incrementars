@@ -1,16 +1,14 @@
-use std::{cell::Ref, marker::PhantomData};
+use super::traits::{Cutoff, InternalNode, Observable, Signal, StabilizationResult};
 
-use super::traits::{Cutoff, Incr, IntoInput, Node, Observable, StabilizationResult};
-
-pub(crate) struct _Map2<I1, I2, O> {
-    pub(crate) output: Incr<O>,
-    pub(crate) input1: Option<Incr<I1>>,
-    pub(crate) input2: Option<Incr<I2>>,
+pub(crate) struct MapNode2<I1, I2, O> {
+    pub(crate) output: Signal<O>,
+    pub(crate) input1: Option<Signal<I1>>,
+    pub(crate) input2: Option<Signal<I2>>,
     pub(crate) f: Option<Box<dyn Fn(I1, I2) -> O>>,
     pub(crate) cutoff: Option<Cutoff<O>>,
 }
 
-impl<I1: Clone + 'static, I2: Clone + 'static, O: 'static> Node for _Map2<I1, I2, O> {
+impl<I1: Clone + 'static, I2: Clone + 'static, O: 'static> InternalNode for MapNode2<I1, I2, O> {
     fn stabilize(&mut self) -> StabilizationResult {
         let input1 = self.input1.as_ref().expect("Map2 detached from graph");
         let input2 = self.input2.as_ref().expect("Map2 detached from graph");
@@ -39,55 +37,5 @@ impl<I1: Clone + 'static, I2: Clone + 'static, O: 'static> Node for _Map2<I1, I2
         self.input2 = None;
         self.f = None;
         self.cutoff = None;
-    }
-}
-
-/// A node that combines two upstream values through a function. Create with [`Incrementars::map2`].
-///
-/// Cloning a `Map2` produces a second handle to the same node.
-pub struct Map2<I1, I2, O> {
-    pub(crate) inner: Incr<O>,
-    pub(crate) marker: PhantomData<fn(I1, I2) -> O>,
-}
-
-impl<I1, I2, O> Clone for Map2<I1, I2, O> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            marker: PhantomData,
-        }
-    }
-}
-
-impl<I1, I2, O: Clone> Observable<O> for Map2<I1, I2, O> {
-    fn id(&self) -> usize {
-        self.inner.id()
-    }
-
-    fn observe(&self) -> O {
-        self.inner.observe()
-    }
-
-    fn depth(&self) -> i32 {
-        self.inner.depth()
-    }
-}
-
-impl<I1, I2, O> Map2<I1, I2, O> {
-    /// Borrows the node's current value without cloning it.
-    pub fn observe_ref(&self) -> Ref<'_, O> {
-        self.inner.observe_ref()
-    }
-}
-
-impl<I1, I2, O: Clone> IntoInput<O> for Map2<I1, I2, O> {
-    fn into_input(self) -> Incr<O> {
-        self.inner
-    }
-}
-
-impl<I1, I2, O: Clone> IntoInput<O> for &Map2<I1, I2, O> {
-    fn into_input(self) -> Incr<O> {
-        self.inner.clone()
     }
 }

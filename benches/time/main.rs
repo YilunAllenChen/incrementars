@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use incrementars::prelude::{Incr, Incrementars, IntoInput, Map1, Var};
+use incrementars::prelude::{Graph, IntoInput, Map1, Signal, Var};
 use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
@@ -11,8 +11,8 @@ fn raw_linear(count: usize, start: i32) -> i32 {
     x
 }
 
-fn build_linear(count: usize) -> (Incrementars, Var<i32>) {
-    let mut dag = Incrementars::new();
+fn build_linear(count: usize) -> (Graph, Var<i32>) {
+    let mut dag = Graph::new();
     let input = dag.var(0);
     let mut map: Map1<i32, i32> = dag.map(input.clone(), |x| x + 1);
     for _ in 0..count {
@@ -21,8 +21,8 @@ fn build_linear(count: usize) -> (Incrementars, Var<i32>) {
     (dag, input)
 }
 
-fn build_fanout(branches: usize) -> (Incrementars, Var<i32>) {
-    let mut dag = Incrementars::new();
+fn build_fanout(branches: usize) -> (Graph, Var<i32>) {
+    let mut dag = Graph::new();
     let input = dag.var(0);
     for offset in 0..branches {
         dag.map(input.clone(), move |x| x + offset as i32);
@@ -30,8 +30,8 @@ fn build_fanout(branches: usize) -> (Incrementars, Var<i32>) {
     (dag, input)
 }
 
-fn build_expand(layers: usize) -> (Incrementars, Var<i32>) {
-    let mut dag = Incrementars::new();
+fn build_expand(layers: usize) -> (Graph, Var<i32>) {
+    let mut dag = Graph::new();
     let input = dag.var(0);
     let root: Map1<i32, i32> = dag.map(input.clone(), |x| x + 1);
     let mut queue = vec![root];
@@ -45,8 +45,8 @@ fn build_expand(layers: usize) -> (Incrementars, Var<i32>) {
     (dag, input)
 }
 
-fn build_iter_tree(layers: usize) -> (Incrementars, Var<i32>) {
-    let mut dag = Incrementars::new();
+fn build_iter_tree(layers: usize) -> (Graph, Var<i32>) {
+    let mut dag = Graph::new();
     let input = dag.var(0);
     let root: Map1<i32, i32> = dag.map(input.clone(), |x| x);
     let mut queue = vec![root];
@@ -60,8 +60,8 @@ fn build_iter_tree(layers: usize) -> (Incrementars, Var<i32>) {
     (dag, input)
 }
 
-fn build_join(width: usize) -> (Incrementars, Vec<Var<i32>>) {
-    let mut dag = Incrementars::new();
+fn build_join(width: usize) -> (Graph, Vec<Var<i32>>) {
+    let mut dag = Graph::new();
     let vars = (0..width as i32).map(|i| dag.var(i)).collect::<Vec<_>>();
     dag.mapn(vars.iter(), |values| values.into_iter().sum::<i32>());
     (dag, vars)
@@ -79,23 +79,23 @@ fn build_join(width: usize) -> (Incrementars, Vec<Var<i32>>) {
 /// A second set of selector Vars drives the bind nodes but is never dirtied
 /// during the benchmark, so bind stabilization follows the normal Changed/Unchanged
 /// path rather than the Rebound path.
-fn build_realistic(depth: usize, width: usize) -> (Incrementars, Vec<Var<i32>>) {
-    let mut dag = Incrementars::new();
+fn build_realistic(depth: usize, width: usize) -> (Graph, Vec<Var<i32>>) {
+    let mut dag = Graph::new();
 
     let input_vars: Vec<Var<i32>> = (0..width).map(|i| dag.var(i as i32)).collect();
     // Selector vars for bind: held at 0 throughout the benchmark.
     let selector_vars: Vec<Var<i32>> = (0..width).map(|_| dag.var(0i32)).collect();
 
-    let mut layer: Vec<Incr<i32>> = input_vars.iter().map(|v| v.clone().into_input()).collect();
-    let sel_layer: Vec<Incr<i32>> = selector_vars.iter().map(|v| v.clone().into_input()).collect();
+    let mut layer: Vec<Signal<i32>> = input_vars.iter().map(|v| v.clone().into_input()).collect();
+    let sel_layer: Vec<Signal<i32>> = selector_vars.iter().map(|v| v.clone().into_input()).collect();
 
     for d in 1..depth {
-        let mut next: Vec<Incr<i32>> = Vec::with_capacity(width);
+        let mut next: Vec<Signal<i32>> = Vec::with_capacity(width);
         for i in 0..width {
             // 0-7 → map (50%), 8-11 → map2 (25%), 12-13 → map3 (12.5%), 14-15 → bind (12.5%)
             let kind = (d.wrapping_mul(97).wrapping_add(i.wrapping_mul(31))) % 16;
             let p = |off: usize| layer[(i + off) % width].clone();
-            let incr: Incr<i32> = match kind {
+            let incr: Signal<i32> = match kind {
                 0..=7 => dag.map(p(0), |x| x.wrapping_add(1)).into_input(),
                 8..=11 => dag.map2(p(0), p(3), |a, b| a.wrapping_add(b)).into_input(),
                 12..=13 => {

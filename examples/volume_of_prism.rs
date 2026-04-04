@@ -1,9 +1,9 @@
-use incrementars::prelude::{Incrementars, Observable};
+use incrementars::prelude::{Graph, Map1, Map2, Observable};
 
 pub fn main() {
-    let mut dag = Incrementars::new();
+    let mut dag = Graph::new();
     let length = dag.var(2.0);
-    let area = dag.map(&length, |x| {
+    let area: Map1<f64, f64> = dag.map(&length, |x| {
         println!("calculating area");
         x * x
     });
@@ -20,7 +20,7 @@ pub fn main() {
 
     println!("introducing height...");
     let height = dag.var(5.0);
-    let volume = dag.map2(&area, &height, |x, y| {
+    let volume: Map2<f64, f64, f64> = dag.map2(&area, &height, |x, y| {
         println!("calculating volume");
         x * y
     });

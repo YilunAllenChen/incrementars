@@ -3,14 +3,14 @@ use std::{
     rc::Rc,
 };
 
-use super::traits::{Incr, IntoInput, Node, NodeState, Observable, StabilizationResult};
+use super::traits::{InternalNode, IntoInput, Observable, Signal, StabilizationResult, ValueState};
 
-pub(crate) struct _Var<T> {
-    pub(crate) state: Rc<RefCell<NodeState<T>>>,
+pub(crate) struct VarNode<T> {
+    pub(crate) state: Rc<RefCell<ValueState<T>>>,
     pub(crate) dirty: Rc<Cell<bool>>,
 }
 
-impl<T> Node for _Var<T> {
+impl<T> InternalNode for VarNode<T> {
     fn depth(&self) -> i32 {
         self.state.borrow().depth
     }
@@ -25,17 +25,17 @@ impl<T> Node for _Var<T> {
     }
 }
 
-impl<T> _Var<T> {
-    pub(crate) fn new(state: Rc<RefCell<NodeState<T>>>, dirty: Rc<Cell<bool>>) -> Self {
+impl<T> VarNode<T> {
+    pub(crate) fn new(state: Rc<RefCell<ValueState<T>>>, dirty: Rc<Cell<bool>>) -> Self {
         Self { state, dirty }
     }
 }
 
-/// An input node holding a value of type `T`. Create with [`Incrementars::var`].
+/// An input node holding a value of type `T`. Create with [`Graph::var`].
 ///
 /// Cloning a `Var` produces a second handle to the same node (cheap reference-count bump).
 pub struct Var<T> {
-    pub(crate) state: Rc<RefCell<NodeState<T>>>,
+    pub(crate) state: Rc<RefCell<ValueState<T>>>,
     pub(crate) dirty: Rc<Cell<bool>>,
 }
 
@@ -50,7 +50,7 @@ impl<T> Clone for Var<T> {
 
 impl<T> Var<T> {
     /// Updates the node's value and marks it dirty. The new value is not visible
-    /// to downstream nodes until the next [`Incrementars::stabilize`].
+    /// to downstream nodes until the next [`Graph::stabilize`].
     pub fn set(&self, value: T) {
         self.state.borrow_mut().value = value;
         self.dirty.set(true);
@@ -86,14 +86,14 @@ impl<T: Clone> Observable<T> for Var<T> {
 }
 
 impl<T: Clone> IntoInput<T> for Var<T> {
-    fn into_input(self) -> Incr<T> {
-        Incr { state: self.state }
+    fn into_input(self) -> Signal<T> {
+        Signal { state: self.state }
     }
 }
 
 impl<T: Clone> IntoInput<T> for &Var<T> {
-    fn into_input(self) -> Incr<T> {
-        Incr {
+    fn into_input(self) -> Signal<T> {
+        Signal {
             state: self.state.clone(),
         }
     }
