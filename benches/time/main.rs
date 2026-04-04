@@ -2,6 +2,15 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use incrementars::prelude::{Incrementars, Map1, Var};
 use std::time::Duration;
 
+#[allow(dead_code)]
+fn raw_linear(count: usize, start: i32) -> i32 {
+    let mut x = start;
+    for _ in 0..=count {
+        x += 1;
+    }
+    x
+}
+
 fn build_linear(count: usize) -> (Incrementars, Var<i32>) {
     let mut dag = Incrementars::new();
     let input = dag.var(0);
@@ -84,6 +93,20 @@ fn criterion_benchmark(c: &mut Criterion) {
             });
         },
     );
+
+    // Baseline: same x+1 computation N times in plain Rust (no framework)
+    for size in [100usize, 1_000, 10_000, 100_000] {
+        group.bench_with_input(
+            BenchmarkId::new("raw_linear", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    black_box(raw_linear(size, black_box(1)));
+                    black_box(raw_linear(size, black_box(0)));
+                });
+            },
+        );
+    }
 
     group.finish();
 }

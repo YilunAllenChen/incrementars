@@ -2,101 +2,131 @@
 
 ![incrementars](https://github.com/YilunAllenChen/incrementars/assets/32376517/3151ae7f-b7c4-436f-a0f5-5595af5bfafb)
 
-very experimental incremental-computing framework.
+Experimental incremental-computing framework for Rust.
 
-# Background
+## Background
 
-Original paper is from Umut A. Acar, you can [find it here](https://drive.google.com/file/d/19UcnvDS1_6opK5qZcceuDjHTLmG_9Ovf/view).
+Based on Umut A. Acar's [original paper on self-adjusting computation](https://drive.google.com/file/d/19UcnvDS1_6opK5qZcceuDjHTLmG_9Ovf/view), heavily inspired by Jane Street's [Incremental](https://github.com/janestreet/incremental) OCaml library.
 
-Heavily inspired by Jane Street's [Incremental Computing Library, Incremental](https://github.com/janestreet/incremental).
+The core idea: declare a computation graph once. When inputs change, only the affected portion of the graph re-runs.
 
-### What's different (and going to be different)?
+## Comparison with Jane Street's Incremental
 
-- Only some of the core features are implemented.
-  - Var
-  - Map
-  - Map2
-  - Map3
-  - MapN
-  - Bind (allows you to add dynamism to graphs).
-- Post-stabilize hooks are implemented via `watch()`, and subgraphs can be removed with `remove()`.
+| Feature | incrementars | Jane Street Incremental |
+|---------|-------------|-------------------------|
+| Ordering | Height-based, min-heap | Height-based, array-of-lists |
+| Node types | Var, Map1–3, MapN, Bind1 | Var, Map, Bind, Observer, Expert, Freeze, Clock |
+| Cutoff | Per-node `Fn(&O, &O) -> bool` | Per-node `('a -> 'a -> bool)` |
+| Observer pattern | None — read any node freely | Explicit `Observer` marks needed outputs |
+| Node states | dirty / clean | invalid / necessary / stale |
+| Cycle detection | None | Detects during height adjustment |
+| Thread safety | Single-threaded (`Rc/RefCell`) | Single-threaded |
 
-### What's similar?
+**What's deliberately different:**
 
-- Incremental computation (duh)
-- Easy to use interface
-- Strongly typed all the way, and Rust safe.
-- Blazingly fast!
+- **No Observer pattern.** Jane Street requires explicit observers because OCaml's GC needs them to know which subgraphs to keep alive. Rust has explicit `remove()` instead, which is more ergonomic and requires no extra API surface.
+- **No three-state node model.** The invalid/necessary/stale model exists in Jane Street to handle bind-induced subgraph invalidation before the GC runs. Rust's `remove()` handles this explicitly.
+- **Eager initial evaluation.** Derived nodes compute their value immediately on creation. Jane Street requires a stabilize call before the first read. The Rust ownership model makes the eager approach more natural.
 
-### A Quick Example
+## Features
 
-Here's a quick example.
+- `Var` — mutable input nodes
+- `Map` / `Map2` / `Map3` — transform one, two, or three upstream values
+- `MapN` — transform a homogeneous list of upstream values
+- `Bind` — dynamic rewiring: the upstream dependency can change at runtime
+- `watch` / `unwatch` — post-stabilize callbacks
+- `remove` — eagerly tear down a node and all its downstream dependents
+- Cutoff optimization — nodes skip downstream propagation when their output is unchanged
+- `map_with_cutoff` — supply a custom equality predicate instead of `PartialEq`
+- `set_if_changed` — skip marking a `Var` dirty when the value hasn't changed
 
-```rust
-use incrementars::prelude::{Incrementars, Observable};
-
-pub fn main() {
-    let mut dag = Incrementars::new();
-    let length = dag.var(2.0);
-    let area = dag.map(&length, |x| {
-        println!("calculating area");
-        x * x
-    });
-
-    // derived nodes compute their initial value eagerly when they are created.
-    assert_eq!(area.observe(), 4.0);
-    length.set(3.0);
-
-    // right after setting, dag isn't stabilized yet.
-    assert_eq!(area.observe(), 4.0);
-
-    dag.stabilize();
-    assert_eq!(area.observe(), 9.0);
-
-    println!("introducing height...");
-    let height = dag.var(5.0);
-    let volume = dag.map2(&area, &height, |x, y| {
-        println!("calculating volume");
-        x * y
-    });
-
-    assert_eq!(volume.observe(), 45.0);
-
-    println!("setting height (this shouldn't trigger area calculation!)");
-    height.set(10.0);
-    dag.stabilize();
-    assert_eq!(volume.observe(), 90.0);
-
-    println!("setting length (this should trigger area calculation)");
-    length.set(2.0);
-    dag.stabilize();
-    assert_eq!(volume.observe(), 40.0);
-}
-```
-
-The graph APIs accept direct handles and references, so the common case is just
-passing `&node`:
+## Quick Example
 
 ```rust
 use incrementars::prelude::{Incrementars, Observable};
 
 let mut dag = Incrementars::new();
+let length = dag.var(2.0);
+let area = dag.map(&length, |x| x * x);
+
+// Derived nodes compute eagerly on creation.
+assert_eq!(area.observe(), 4.0);
+
+length.set(3.0);
+// Not yet propagated.
+assert_eq!(area.observe(), 4.0);
+
+dag.stabilize();
+assert_eq!(area.observe(), 9.0);
+
+let height = dag.var(5.0);
+let volume = dag.map2(&area, &height, |x, y| x * y);
+assert_eq!(volume.observe(), 45.0);
+
+// Only volume recomputes — area is unchanged.
+height.set(10.0);
+dag.stabilize();
+assert_eq!(volume.observe(), 90.0);
+```
+
+Pass `&node` to avoid consuming handles — the graph APIs accept both owned and borrowed forms:
+
+```rust
 let x = dag.var(2);
-let y = dag.map(&x, |value| value + 1);
+let y = dag.map(&x, |v| v + 1);
 assert_eq!(y.observe(), 3);
 ```
 
-If you want to avoid cloning outputs on reads, concrete node handles also expose
-`observe_ref()`.
+Use `observe_ref()` to borrow the current value without cloning:
 
-`stabilize()` only propagates pending dirty-input changes. It does not perform the
-initial computation for newly-created derived nodes.
+```rust
+let text = dag.map(&x, |v| format!("value={v}").into_bytes());
+assert_eq!(text.observe_ref().as_slice(), b"value=2");
+```
 
-## NOTE: What's new in V2
+### Custom cutoff
 
-I refactored the original implementation. The original implementation involves passing around two node handles (one
-for reads and one for writes), which at times can feel unergonomic / confusing. The new implementation is much more
-elegant in that it uses a single node handle for both reads and writes.
+Supply a domain-specific equality predicate — useful for float epsilon comparisons or types without `PartialEq`:
 
-Internally, it uses `Rc<RefCell>>` heavily. This is a challenge intrinsic to Rust given how ownerships & borrow checking
-work.
+```rust
+let smoothed = dag.map_with_cutoff(
+    &sensor,
+    |v| v * 2.0,
+    |old, new| (old - new).abs() < 0.01,  // suppress tiny changes
+);
+```
+
+### `set_if_changed`
+
+Skip propagation when a `Var` is set to its current value:
+
+```rust
+x.set_if_changed(42); // marks dirty only if current value != 42
+```
+
+### Dynamic graphs with `Bind`
+
+`Bind` lets the upstream dependency change at runtime. The graph is rewired automatically and heights are recalculated:
+
+```rust
+let picker = dag.var(Side::Left);
+let result = dag.bind(&picker, move |side| match side {
+    Side::Left  => left.clone().into_input(),
+    Side::Right => right.clone().into_input(),
+});
+picker.set(Side::Right);
+dag.stabilize(); // result now tracks `right`
+```
+
+## Performance
+
+Per-node stabilization overhead on a linear chain (Apple Silicon, release build):
+
+| Chain length | Raw Rust loop | incrementars | Overhead/node |
+|---|---|---|---|
+| 100 | 128 ns | 2,900 ns | ~28 ns |
+| 1,000 | 1,261 ns | 25,900 ns | ~25 ns |
+| 10,000 | 12,534 ns | 251,000 ns | ~24 ns |
+| 100,000 | 125,370 ns | 2,646,000 ns | ~25 ns |
+
+The ~25 ns/node overhead comes from `Rc<RefCell>` borrows, heap operations, dirty-flag checks, and cutoff dispatch. For any node whose `f` does meaningful work, this overhead is negligible.

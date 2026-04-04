@@ -1,5 +1,5 @@
-use std::cmp::min;
-use std::collections::BinaryHeap;
+use std::cmp::{max, Reverse};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -27,9 +27,9 @@ pub use self::{
     var::Var,
 };
 
-// Vars are assigned the maximum depth so that derived nodes, which subtract 1
-// per level, are always processed after their inputs in the stabilization queue.
-const VAR_DEPTH: i32 = 1_000;
+// Vars are assigned height 0. Derived nodes add 1 per level, so the stabilization
+// queue (a min-heap on height) always processes inputs before their dependents.
+const VAR_HEIGHT: i32 = 0;
 
 struct InputNode {
     id: usize,
@@ -66,8 +66,12 @@ pub struct Incrementars {
     pub(crate) dependencies: Vec<Vec<usize>>,
     // child_id → [parent_ids]: which nodes a given node depends on
     reverse_dependencies: Vec<Vec<usize>>,
+    // set of (parent_id, child_id) edges for O(1) deduplication in add_edge
+    edge_set: HashSet<(usize, usize)>,
     hooks: Vec<Vec<(usize, Box<dyn FnMut()>)>>,
     hook_counter: usize,
+    // hook_id → node_id for O(1) unwatch
+    hook_index: HashMap<usize, usize>,
 }
 
 impl Incrementars {
@@ -79,8 +83,10 @@ impl Incrementars {
             inputs: vec![],
             dependencies: vec![],
             reverse_dependencies: vec![],
+            edge_set: HashSet::new(),
             hooks: vec![],
             hook_counter: 0,
+            hook_index: HashMap::new(),
         }
     }
 
@@ -109,13 +115,9 @@ impl Incrementars {
     /// Adds a directed edge parent → child to both dependency maps.
     /// Silently deduplicates: calling with the same pair twice has no effect.
     fn add_edge(&mut self, parent_id: usize, child_id: usize) {
-        let deps = &mut self.dependencies[parent_id];
-        if deps.last() != Some(&child_id) && !deps.contains(&child_id) {
-            deps.push(child_id);
-        }
-        let rev = &mut self.reverse_dependencies[child_id];
-        if rev.last() != Some(&parent_id) && !rev.contains(&parent_id) {
-            rev.push(parent_id);
+        if self.edge_set.insert((parent_id, child_id)) {
+            self.dependencies[parent_id].push(child_id);
+            self.reverse_dependencies[child_id].push(parent_id);
         }
     }
 
@@ -125,7 +127,7 @@ impl Incrementars {
     /// nodes until the next call to [`stabilize`](Incrementars::stabilize).
     pub fn var<T: Clone + 'static>(&mut self, value: T) -> Var<T> {
         let id = self.next_id();
-        let state = Rc::new(RefCell::new(traits::NodeState::new(id, VAR_DEPTH, value)));
+        let state = Rc::new(RefCell::new(traits::NodeState::new(id, VAR_HEIGHT, value)));
         let dirty = Rc::new(Cell::new(false));
         self.nodes[id] = Some(Box::new(var::_Var::new(state.clone(), dirty.clone())));
         self.inputs.push(InputNode {
@@ -150,11 +152,40 @@ impl Incrementars {
         let id = self.next_id();
         let input_id = input.id();
         self.add_edge(input_id, id);
-        let output = Incr::new(id, input.depth() - 1, f(input.observe()));
+        let output = Incr::new(id, input.depth() + 1, f(input.observe()));
         let node = Box::new(map::_Map1 {
             output: output.clone(),
             input: Some(input),
             f: Some(Box::new(f)),
+            cutoff: Some(Box::new(|a, b| a == b)),
+        });
+        self.nodes[id] = Some(node);
+        Map1 {
+            inner: output,
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Like [`map`](Incrementars::map) but with a custom cutoff predicate instead of `PartialEq`.
+    ///
+    /// `cutoff(old, new)` returning `true` suppresses downstream propagation.
+    /// Pass `|_, _| false` to always propagate (no cutoff). Does not require `O: PartialEq`.
+    pub fn map_with_cutoff<I: Clone + 'static, O: 'static>(
+        &mut self,
+        input: impl IntoInput<I>,
+        f: impl Fn(I) -> O + 'static,
+        cutoff: impl Fn(&O, &O) -> bool + 'static,
+    ) -> Map1<I, O> {
+        let input = input.into_input();
+        let id = self.next_id();
+        let input_id = input.id();
+        self.add_edge(input_id, id);
+        let output = Incr::new(id, input.depth() + 1, f(input.observe()));
+        let node = Box::new(map::_Map1 {
+            output: output.clone(),
+            input: Some(input),
+            f: Some(Box::new(f)),
+            cutoff: Some(Box::new(cutoff)),
         });
         self.nodes[id] = Some(node);
         Map1 {
@@ -183,7 +214,7 @@ impl Incrementars {
         self.add_edge(id2, id);
         let output = Incr::new(
             id,
-            min(input1.depth(), input2.depth()) - 1,
+            max(input1.depth(), input2.depth()) + 1,
             f(input1.observe(), input2.observe()),
         );
         let node = Box::new(map2::_Map2 {
@@ -191,6 +222,7 @@ impl Incrementars {
             input1: Some(input1),
             input2: Some(input2),
             f: Some(Box::new(f)),
+            cutoff: Some(Box::new(|a, b| a == b)),
         });
         self.nodes[id] = Some(node);
         Map2 {
@@ -227,7 +259,7 @@ impl Incrementars {
         self.add_edge(id3, id);
         let output = Incr::new(
             id,
-            min(min(input1.depth(), input2.depth()), input3.depth()) - 1,
+            max(max(input1.depth(), input2.depth()), input3.depth()) + 1,
             f(input1.observe(), input2.observe(), input3.observe()),
         );
         let node = Box::new(map3::_Map3 {
@@ -236,6 +268,7 @@ impl Incrementars {
             input2: Some(input2),
             input3: Some(input3),
             f: Some(Box::new(f)),
+            cutoff: Some(Box::new(|a, b| a == b)),
         });
         self.nodes[id] = Some(node);
         Map3 {
@@ -269,9 +302,9 @@ impl Incrementars {
         let depth = inputs
             .iter()
             .map(|input| input.depth())
-            .min()
+            .max()
             .expect("mapn requires at least one input")
-            - 1;
+            + 1;
         let output = Incr::new(
             id,
             depth,
@@ -281,6 +314,7 @@ impl Incrementars {
             output: output.clone(),
             inputs: Some(inputs),
             f: Some(Box::new(f)),
+            cutoff: Some(Box::new(|a, b| a == b)),
         });
         self.nodes[id] = Some(node);
         MapN {
@@ -306,7 +340,7 @@ impl Incrementars {
         let input_id = input.id();
         let value = f(input.observe());
         let value_id = value.id();
-        let depth = min(input.depth(), value.depth()) - 1;
+        let depth = max(input.depth(), value.depth()) + 1;
         let output = Incr::new(id, depth, value.observe());
         let node = Box::new(bind::_Bind1 {
             output: output.clone(),
@@ -334,27 +368,28 @@ impl Incrementars {
         mut f: impl FnMut(T) + 'static,
     ) -> usize {
         let input = input.into_input();
-        let id = self.hook_counter;
+        let hook_id = self.hook_counter;
         self.hook_counter += 1;
         let node_id = input.id();
         self.hooks[node_id].push((
-            id,
+            hook_id,
             Box::new(move || {
                 f(input.observe());
             }),
         ));
-        id
+        self.hook_index.insert(hook_id, node_id);
+        hook_id
     }
 
     /// Removes a previously-registered watcher by ID.
     pub fn unwatch(&mut self, watcher_id: usize) -> bool {
-        let mut removed = false;
-        for hooks in &mut self.hooks {
-            let before = hooks.len();
-            hooks.retain(|(id, _)| *id != watcher_id);
-            removed |= hooks.len() != before;
+        if let Some(&node_id) = self.hook_index.get(&watcher_id) {
+            self.hooks[node_id].retain(|(id, _)| *id != watcher_id);
+            self.hook_index.remove(&watcher_id);
+            true
+        } else {
+            false
         }
-        removed
     }
 
     /// Removes `node` and every downstream node that depends on it.
@@ -385,16 +420,25 @@ impl Incrementars {
             for parent_id in parents {
                 if !to_remove.contains(&parent_id) {
                     self.dependencies[parent_id].retain(|&child_id| child_id != node_id);
+                    self.edge_set.remove(&(parent_id, node_id));
                 }
             }
         }
 
         self.inputs.retain(|input| !to_remove.contains(&input.id));
 
-        for node_id in &removal_order {
-            self.hooks[*node_id].clear();
-            self.dependencies[*node_id].clear();
-            self.reverse_dependencies[*node_id].clear();
+        for &node_id in &removal_order {
+            for (hook_id, _) in self.hooks[node_id].drain(..) {
+                self.hook_index.remove(&hook_id);
+            }
+            for &child_id in &self.dependencies[node_id] {
+                self.edge_set.remove(&(node_id, child_id));
+            }
+            for &parent_id in &self.reverse_dependencies[node_id] {
+                self.edge_set.remove(&(parent_id, node_id));
+            }
+            self.dependencies[node_id].clear();
+            self.reverse_dependencies[node_id].clear();
         }
 
         for node in &mut self.reverse_dependencies {
@@ -425,15 +469,15 @@ impl Incrementars {
             .map(|input| input.id)
             .map(|id| {
                 let node = self.node(id);
-                (node.depth(), id)
+                (Reverse(node.depth()), id)
             })
-            .collect::<BinaryHeap<(i32, usize)>>();
+            .collect::<BinaryHeap<(Reverse<i32>, usize)>>();
 
         let mut visited = Bitmap::new(self.id_counter);
         let mut changed = Bitmap::new(self.id_counter);
         let mut changed_nodes = vec![];
 
-        while let Some((_depth, head_id)) = queue.pop() {
+        while let Some((_, head_id)) = queue.pop() {
             let callbacks = {
                 let head = self.node_mut(head_id);
                 head.stabilize()
@@ -449,8 +493,8 @@ impl Incrementars {
                     for &child_id in &self.dependencies[head_id] {
                         if !visited.contains(&child_id) {
                             visited.insert(child_id);
-                            let depth = self.node(child_id).depth();
-                            queue.push((depth, child_id));
+                            let height = self.node(child_id).depth();
+                            queue.push((Reverse(height), child_id));
                         }
                     }
                 }
@@ -465,16 +509,16 @@ impl Incrementars {
 
                     let mut adjust_queue = vec![head_id];
                     while let Some(node_id) = adjust_queue.pop() {
-                        let min_parent_depth = self.reverse_dependencies[node_id]
+                        let max_parent_height = self.reverse_dependencies[node_id]
                             .iter()
                             .filter_map(|&pid| self.nodes[pid].as_ref().map(|node| node.depth()))
-                            .min();
+                            .max();
 
-                        if let Some(parent_depth) = min_parent_depth {
-                            let new_depth = parent_depth - 1;
-                            let old_depth = self.node(node_id).depth();
-                            if new_depth != old_depth {
-                                self.node_mut(node_id).adjust_depth(new_depth);
+                        if let Some(parent_height) = max_parent_height {
+                            let new_height = parent_height + 1;
+                            let old_height = self.node(node_id).depth();
+                            if new_height != old_height {
+                                self.node_mut(node_id).adjust_depth(new_height);
                                 adjust_queue.extend(self.dependencies[node_id].iter().copied());
                             }
                         }
@@ -488,8 +532,8 @@ impl Incrementars {
                         for &child_id in &self.dependencies[head_id] {
                             if !visited.contains(&child_id) {
                                 visited.insert(child_id);
-                                let depth = self.node(child_id).depth();
-                                queue.push((depth, child_id));
+                                let height = self.node(child_id).depth();
+                                queue.push((Reverse(height), child_id));
                             }
                         }
                     }
@@ -692,8 +736,8 @@ mod tests {
         let binder_new_depth = binder.depth();
         let mabind_new_depth = map_after_bind.depth();
 
-        assert_eq!(binder_new_depth, binder_old_depth - 1);
-        assert_eq!(mabind_new_depth, mabind_old_depth - 1);
+        assert_eq!(binder_new_depth, binder_old_depth + 1);
+        assert_eq!(mabind_new_depth, mabind_old_depth + 1);
     }
 
     #[test]
@@ -849,6 +893,63 @@ mod tests {
         x.set(7);
         dag.stabilize();
         assert_eq!(seen.load(Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn test_set_if_changed_does_not_propagate() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut dag = Incrementars::new();
+        let x = dag.var(5);
+        let c = Arc::clone(&counter);
+        dag.map(&x, move |v| {
+            c.fetch_add(1, Ordering::SeqCst);
+            v + 1
+        });
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // set_if_changed with same value — should not trigger recomputation
+        x.set_if_changed(5);
+        dag.stabilize();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // set_if_changed with new value — should trigger recomputation
+        x.set_if_changed(10);
+        dag.stabilize();
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_map_with_cutoff() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut dag = Incrementars::new();
+        let x = dag.var(1.0f64);
+        // Cutoff: suppress downstream propagation when output changes by less than 0.5
+        let out = dag.map_with_cutoff(&x, |v| v * 2.0, |old, new| (old - new).abs() < 0.5);
+
+        // Wire a downstream node that counts recomputations
+        let c = Arc::clone(&counter);
+        let downstream = dag.map(&out, move |v| {
+            c.fetch_add(1, Ordering::SeqCst);
+            v + 1.0
+        });
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        assert_eq!(downstream.observe(), 3.0);
+
+        // x=1.1 → out would be 2.2; |2.0 - 2.2| = 0.2 < 0.5, cutoff fires
+        // downstream should NOT recompute
+        x.set(1.1);
+        dag.stabilize();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        // out retains old value because cutoff suppressed the update
+        assert_eq!(out.observe(), 2.0);
+
+        // x=5.0 → out would be 10.0; |2.0 - 10.0| = 8.0 >= 0.5, cutoff does not fire
+        // downstream SHOULD recompute
+        x.set(5.0);
+        dag.stabilize();
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        assert_eq!(out.observe(), 10.0);
+        assert_eq!(downstream.observe(), 11.0);
     }
 
     #[test]

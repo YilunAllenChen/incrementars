@@ -6,16 +6,19 @@ pub(crate) struct _Map1<I, O> {
     pub(crate) output: Incr<O>,
     pub(crate) input: Option<Incr<I>>,
     pub(crate) f: Option<Box<dyn Fn(I) -> O>>,
+    pub(crate) cutoff: Option<Box<dyn Fn(&O, &O) -> bool>>,
 }
 
-impl<I: Clone + 'static, O: PartialEq + 'static> Node for _Map1<I, O> {
+impl<I: Clone + 'static, O: 'static> Node for _Map1<I, O> {
     fn stabilize(&mut self) -> StabilizationResult {
         let input = self.input.as_ref().expect("Map1 detached from graph");
         let f = self.f.as_ref().expect("Map1 detached from graph");
         let new_value = f(input.observe());
         let mut output = self.output.state.borrow_mut();
-        if new_value == output.value {
-            return StabilizationResult::Unchanged;
+        if let Some(cutoff) = &self.cutoff {
+            if cutoff(&new_value, &output.value) {
+                return StabilizationResult::Unchanged;
+            }
         }
         output.value = new_value;
         StabilizationResult::Changed
@@ -32,6 +35,7 @@ impl<I: Clone + 'static, O: PartialEq + 'static> Node for _Map1<I, O> {
     fn teardown(&mut self) {
         self.input = None;
         self.f = None;
+        self.cutoff = None;
     }
 }
 

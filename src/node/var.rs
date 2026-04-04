@@ -56,6 +56,15 @@ impl<T> Var<T> {
         self.dirty.set(true);
     }
 
+    /// Updates the node's value only if it differs from the current value,
+    /// avoiding unnecessary downstream recomputation.
+    pub fn set_if_changed(&self, value: T) where T: PartialEq {
+        if self.state.borrow().value != value {
+            self.state.borrow_mut().value = value;
+            self.dirty.set(true);
+        }
+    }
+
     /// Borrows the node's current value without cloning it.
     pub fn observe_ref(&self) -> Ref<'_, T> {
         Ref::map(self.state.borrow(), |state| &state.value)

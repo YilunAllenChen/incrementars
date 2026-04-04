@@ -7,17 +7,20 @@ pub(crate) struct _Map2<I1, I2, O> {
     pub(crate) input1: Option<Incr<I1>>,
     pub(crate) input2: Option<Incr<I2>>,
     pub(crate) f: Option<Box<dyn Fn(I1, I2) -> O>>,
+    pub(crate) cutoff: Option<Box<dyn Fn(&O, &O) -> bool>>,
 }
 
-impl<I1: Clone + 'static, I2: Clone + 'static, O: PartialEq + 'static> Node for _Map2<I1, I2, O> {
+impl<I1: Clone + 'static, I2: Clone + 'static, O: 'static> Node for _Map2<I1, I2, O> {
     fn stabilize(&mut self) -> StabilizationResult {
         let input1 = self.input1.as_ref().expect("Map2 detached from graph");
         let input2 = self.input2.as_ref().expect("Map2 detached from graph");
         let f = self.f.as_ref().expect("Map2 detached from graph");
         let new_value = f(input1.observe(), input2.observe());
         let mut output = self.output.state.borrow_mut();
-        if new_value == output.value {
-            return StabilizationResult::Unchanged;
+        if let Some(cutoff) = &self.cutoff {
+            if cutoff(&new_value, &output.value) {
+                return StabilizationResult::Unchanged;
+            }
         }
         output.value = new_value;
         StabilizationResult::Changed
@@ -35,6 +38,7 @@ impl<I1: Clone + 'static, I2: Clone + 'static, O: PartialEq + 'static> Node for 
         self.input1 = None;
         self.input2 = None;
         self.f = None;
+        self.cutoff = None;
     }
 }
 

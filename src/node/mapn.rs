@@ -6,16 +6,19 @@ pub(crate) struct _MapN<T, O> {
     pub(crate) output: Incr<O>,
     pub(crate) inputs: Option<Vec<Incr<T>>>,
     pub(crate) f: Option<Box<dyn Fn(Vec<T>) -> O>>,
+    pub(crate) cutoff: Option<Box<dyn Fn(&O, &O) -> bool>>,
 }
 
-impl<T: Clone + 'static, O: PartialEq + 'static> Node for _MapN<T, O> {
+impl<T: Clone + 'static, O: 'static> Node for _MapN<T, O> {
     fn stabilize(&mut self) -> StabilizationResult {
         let inputs = self.inputs.as_ref().expect("MapN detached from graph");
         let f = self.f.as_ref().expect("MapN detached from graph");
         let new_value = f(inputs.iter().map(|input| input.observe()).collect());
         let mut output = self.output.state.borrow_mut();
-        if new_value == output.value {
-            return StabilizationResult::Unchanged;
+        if let Some(cutoff) = &self.cutoff {
+            if cutoff(&new_value, &output.value) {
+                return StabilizationResult::Unchanged;
+            }
         }
         output.value = new_value;
         StabilizationResult::Changed
@@ -32,6 +35,7 @@ impl<T: Clone + 'static, O: PartialEq + 'static> Node for _MapN<T, O> {
     fn teardown(&mut self) {
         self.inputs = None;
         self.f = None;
+        self.cutoff = None;
     }
 }
 
